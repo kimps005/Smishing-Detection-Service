@@ -1,0 +1,12 @@
+깔아야 할 것 (처음 1번만 하면 됨)
+1. vscode 터미널에서 cloudflared 설치
+winget install Cloudflare.cloudflared
+2. cmd 관리자 권한으로 실행한 뒤 설치
+cloudflared.exe service install eyJhIjoiNDVmZTc0YTUxZTgyYzdjYjI0ODIzZjdkZjA1ZjFiNjYiLCJ0IjoiZDgzNzYzYjctOGI4Yy00NWI3LWFmYTgtYWVmZGFmNDFhZDhmIiwicyI6Ik9UQmlaVGN6WmpNdFpEazJPUzAwWVdabExUZzRNV1l0T1RsallUWm1OMlV5T1RrMyJ9
+
+
+실행 순서
+1. uvicorn main:app --reload
+2. streamlit run app.py
+3. 브라우저에서 https://catchsmishing.com 접속
+

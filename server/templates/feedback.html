@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>피드백 — CatchSmishing</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+body {
+  background: linear-gradient(135deg, #e8f2fe 0%, #f4f8ff 35%, #f0edff 70%, #f8faff 100%);
+  min-height: 100vh;
+}
+body .card { border-color: rgba(191,219,254,0.6); }
+
+.nav { zoom: 1.1; }
+
+/* ─ 전체 래퍼 ─ */
+.fb-wrapper {
+  padding-top: calc(68px + 2rem);
+  min-height: 100vh;
+}
+.fb-container {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0 1.5rem 3rem;
+}
+
+/* 탭 행 */
+.fb-tabs {
+  display: flex;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 1.2rem;
+}
+.fb-tab {
+  padding: 9px 28px; text-align: center;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  border: none; background: none; color: var(--text-3);
+  border-bottom: 2.5px solid transparent; margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.fb-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* ─ 본문 2열 그리드 ─ */
+.fb-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+.fb-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Radio toggle */
+.mode-toggle { display: flex; gap: 8px; margin-bottom: 1.2rem; }
+.mode-btn {
+  flex: 1; padding: 10px; text-align: center;
+  font-size: 14px; font-weight: 600;
+  border: 1.5px solid var(--border); border-radius: 10px;
+  cursor: pointer; transition: all 0.15s; background: white; color: var(--text-3);
+}
+.mode-btn.active { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+
+/* Select */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px;
+}
+
+/* URL ranking */
+.rank-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0.75rem 1rem; border-radius: 12px;
+  border: 1px solid var(--border); background: white;
+  margin-bottom: 6px;
+}
+.rank-num { min-width: 36px; text-align: center; flex-shrink: 0; }
+.rank-url { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); word-break: break-all; overflow-wrap: break-word; min-width: 0; }
+.rank-cat-badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.rank-count { font-size: 12px; color: var(--text-3); white-space: nowrap; min-width: 55px; text-align: right; }
+
+/* Pagination */
+.pagination { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 0.8rem; }
+.pg-btn {
+  width: 32px; height: 32px; border-radius: 8px; border: 1.5px solid var(--border);
+  background: white; font-size: 13px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-2); transition: all 0.12s;
+}
+.pg-btn:hover { border-color: var(--primary); color: var(--primary); }
+.pg-btn.active { background: var(--primary); border-color: var(--primary); color: white; }
+.pg-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* Pie chart */
+.pie-wrap { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; }
+.pie-legend { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.pie-leg-item { display: flex; align-items: center; gap: 6px; }
+.pie-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* Search row */
+.search-row { display: flex; gap: 8px; margin-bottom: 1rem; }
+.search-row input { flex: 3; }
+.search-row select { flex: 1.5; }
+.search-row button { flex-shrink: 0; }
+
+/* Usage card */
+.usage-card { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 8px; }
+.usage-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 5px; }
+.usage-desc { font-size: 13px; color: var(--text-2); line-height: 1.7; }
+
+/* Toast */
+.toast { padding: 0.8rem 1.2rem; border-radius: 10px; margin-bottom: 1rem; font-size: 14px; font-weight: 600; }
+.toast-ok { background: var(--safe-bg); border: 1px solid #86efac; color: #166534; }
+.toast-err { background: var(--danger-bg); border: 1px solid #fca5a5; color: var(--danger); }
+
+.sec-title { font-size: 14px; font-weight: 800; color: var(--text); margin-bottom: 0.8rem; border-left: 3px solid var(--primary); padding-left: 8px; }
+
+@media (max-width: 900px) {
+  .fb-body { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-brand">🛡️ Catch<span>Smishing</span></a>
+  <ul class="nav-links">
+    <li><a href="/">홈</a></li>
+    <li><a href="/analyze-page">분석</a></li>
+    <li><a href="/feedback-page" class="active">피드백</a></li>
+  </ul>
+</nav>
+
+<div class="fb-wrapper">
+<div class="fb-container">
+
+  <div style="margin-bottom:1.2rem;">
+    <div style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:6px;">💬 피드백</div>
+    <div style="font-size:15px;color:var(--text-3);">탐지 결과 개선에 도움을 주세요</div>
+  </div>
+
+  <div class="fb-tabs">
+    <button class="fb-tab active" id="ftab-submit" onclick="switchTab('submit')">📝 피드백하기</button>
+    <button class="fb-tab" id="ftab-usage" onclick="switchTab('usage')">📊 피드백 활용</button>
+  </div>
+
+
+  <!-- ── 피드백하기 본문 ── -->
+  <div class="fb-body" id="body-submit">
+
+    <!-- 왼쪽: 폼 -->
+    <div class="fb-col">
+      <div class="card" style="flex:1;">
+        <p style="font-size:13.5px;color:var(--text-3);margin-bottom:1.2rem;">
+          스미싱 탐지 결과가 잘못됐거나 개선이 필요하다면 알려주세요.
+        </p>
+        <div id="toast" style="display:none;"></div>
+
+        <div class="mode-toggle">
+          <div class="mode-btn active" id="modeText" onclick="setMode('text')">📝 텍스트</div>
+          <div class="mode-btn" id="modeImage" onclick="setMode('image')">🖼️ 이미지</div>
+        </div>
+
+        <div id="inputText">
+          <label>문자 내용</label>
+          <textarea id="textContent" placeholder="분석된 문자 내용을 입력해주세요." style="height:120px;"></textarea>
+        </div>
+
+        <div id="inputImage" style="display:none;">
+          <label>문자 캡처 이미지</label>
+          <div class="drop-zone" id="fbDropZone" style="padding:1.5rem;">
+            <input type="file" id="fbFileInput" accept="image/png,image/jpeg,image/jpg">
+            <div class="drop-icon" style="font-size:1.8rem;">📁</div>
+            <div class="drop-text">클릭 또는 드래그해서 이미지 첨부</div>
+          </div>
+          <div id="fbPreview" style="display:none;margin-top:0.8rem;">
+            <img id="fbPreviewImg" style="width:100%;max-height:200px;object-fit:contain;border-radius:8px;background:var(--bg);">
+            <button onclick="clearFbImage()" style="margin-top:4px;font-size:12px;color:var(--text-3);background:none;border:none;cursor:pointer;">✕ 이미지 제거</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:1.2rem;">
+          <div>
+            <label>AI 판정 (시스템이 내린 결과)</label>
+            <select id="givenGrade">
+              <option value="Danger">🚨 위험</option>
+              <option value="Warning">⚠️ 주의</option>
+              <option value="Safe">✅ 안전</option>
+            </select>
+          </div>
+          <div>
+            <label>실제 판정 (올바른 결과)</label>
+            <select id="correctGrade">
+              <option value="Safe">✅ 안전</option>
+              <option value="Warning">⚠️ 주의</option>
+              <option value="Danger">🚨 위험</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top:1.2rem;">
+          <label>이유 (선택)</label>
+          <textarea id="reason" placeholder="예: 실제로 제가 주문한 택배 안내 문자입니다." style="height:80px;"></textarea>
+        </div>
+
+        <button class="btn btn-primary btn-full" style="margin-top:1.2rem;" id="btnSubmit" onclick="submitFeedback()">
+          피드백 제출
+        </button>
+      </div>
+    </div>
+
+    <!-- 오른쪽: 2박스 (활용방향 + 모델 개선) -->
+    <div class="fb-col">
+      <div class="card">
+        <div class="sec-title">수집된 피드백, 어떻게 활용되나요?</div>
+        <div class="usage-card">
+          <div class="usage-title">📌 전체 분석 결과 누적 수집</div>
+          <div class="usage-desc">안전·주의·위험 모든 판정을 항목별 점수(P_NLP, P_URL, P_Gemini 등)와 함께 저장해 판정 패턴을 분석합니다.</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-title">📌 키워드 가중치 조정</div>
+          <div class="usage-desc">오탐·미탐 패턴을 분석해 NLP 위험 키워드의 가중치를 조정합니다.</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-title">📌 Gemini 프롬프트 개선</div>
+          <div class="usage-desc">오탐·미탐 사례를 분석해 AI 문맥 분석 프롬프트의 판단 기준을 지속적으로 개선합니다.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="sec-title">모델 개선 방향</div>
+        <div style="background:var(--safe-bg);border:1px solid #86efac;border-radius:12px;padding:1.1rem 1.3rem;">
+          <div style="font-size:12.5px;color:#166534;line-height:1.9;">
+            ✅ <strong>누적 데이터 기반 오탐·미탐 패턴 분석</strong> — 전체 판정 데이터를 활용해 판단 오류 유형을 파악합니다<br>
+            ✅ <strong>분류 모델 정확도 향상</strong> — 수집된 데이터로 학습 데이터를 지속 확보해 모델을 개선합니다<br>
+            ✅ <strong>판단 임계값 조정</strong> — 피드백 패턴을 반영해 안전·주의·위험 기준을 정밀하게 조정합니다
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 피드백 활용 본문 ── -->
+  <div class="fb-body" id="body-usage" style="display:none;">
+
+    <!-- 왼쪽: 파이 차트 + URL 순위 -->
+    <div class="fb-col">
+      <div class="card">
+        <div class="sec-title">탐지된 스미싱 유형 분포</div>
+        <div id="pieChart" style="display:none;">
+          <div class="pie-wrap">
+            <svg id="pieSvg" width="140" height="140" viewBox="0 0 140 140"></svg>
+            <div class="pie-legend" id="pieLegend"></div>
+          </div>
+        </div>
+        <div id="pieEmpty" style="font-size:13px;color:var(--text-3);">데이터 로딩 중...</div>
+      </div>
+
+      <div class="card" style="flex:1;">
+        <div class="sec-title">수집된 위험 URL 현황</div>
+        <p style="font-size:13px;color:var(--text-3);margin-bottom:1rem;">위험으로 판정된 URL의 누적 탐지 현황입니다.</p>
+
+        <div class="search-row">
+          <input type="text" id="urlSearch" placeholder="🔍 URL 검색 (예: amazon, trust4)">
+          <select id="catFilter">
+            <option value="">전체 카테고리</option>
+            <option value="FINANCE">금융 사기</option>
+            <option value="DELIVERY">배송 사기</option>
+            <option value="GOVERNMENT">공공기관 사칭</option>
+            <option value="PROMOTION">홍보/투자 유도</option>
+            <option value="AUTH">계정 탈취</option>
+            <option value="WORK">지인 사칭</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadRanking()">새로고침</button>
+        </div>
+
+        <div id="rankingList"><div style="text-align:center;padding:2rem;color:var(--text-3);">로딩 중...</div></div>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </div>
+
+    <!-- 오른쪽: 2박스 (활용방향 + 모델 개선) -->
+    <div class="fb-col">
+      <div class="card">
+        <div class="sec-title">수집된 피드백, 어떻게 활용되나요?</div>
+        <div class="usage-card">
+          <div class="usage-title">📌 전체 분석 결과 누적 수집</div>
+          <div class="usage-desc">안전·주의·위험 모든 판정을 항목별 점수(P_NLP, P_URL, P_Gemini 등)와 함께 저장해 판정 패턴을 분석합니다.</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-title">📌 키워드 가중치 조정</div>
+          <div class="usage-desc">오탐·미탐 패턴을 분석해 NLP 위험 키워드의 가중치를 조정합니다.</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-title">📌 Gemini 프롬프트 개선</div>
+          <div class="usage-desc">오탐·미탐 사례를 분석해 AI 문맥 분석 프롬프트의 판단 기준을 지속적으로 개선합니다.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="sec-title">모델 개선 방향</div>
+        <div style="background:var(--safe-bg);border:1px solid #86efac;border-radius:12px;padding:1.1rem 1.3rem;">
+          <div style="font-size:12.5px;color:#166534;line-height:1.9;">
+            ✅ <strong>누적 데이터 기반 오탐·미탐 패턴 분석</strong> — 전체 판정 데이터를 활용해 판단 오류 유형을 파악합니다<br>
+            ✅ <strong>분류 모델 정확도 향상</strong> — 수집된 데이터로 학습 데이터를 지속 확보해 모델을 개선합니다<br>
+            ✅ <strong>판단 임계값 조정</strong> — 피드백 패턴을 반영해 안전·주의·위험 기준을 정밀하게 조정합니다
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- fb-container -->
+</div><!-- fb-wrapper -->
+
+<script>
+const CAT_NAMES = {
+  FINANCE:'금융 사기', DELIVERY:'배송 사기', GOVERNMENT:'공공기관 사칭',
+  PROMOTION:'홍보/투자 유도', AUTH:'계정 탈취', WORK:'지인 사칭',
+};
+const CAT_COLORS = {
+  FINANCE:'#dc2626', DELIVERY:'#f59e0b', GOVERNMENT:'#7c3aed',
+  PROMOTION:'#0891b2', AUTH:'#ea580c', WORK:'#2563eb',
+};
+
+const PAGE_SIZE = 5;
+let inputMode = 'text';
+let fbFile = null;
+let rankingData = null;
+let filteredData = [];
+let currentPage = 1;
+
+// ── 탭 전환 ──
+function switchTab(tab) {
+  const isUsage = tab === 'usage';
+  document.getElementById('body-submit').style.display = isUsage ? 'none' : 'grid';
+  document.getElementById('body-usage').style.display  = isUsage ? 'grid' : 'none';
+  document.getElementById('ftab-submit').classList.toggle('active', !isUsage);
+  document.getElementById('ftab-usage').classList.toggle('active',  isUsage);
+  if (isUsage && !rankingData) loadRanking();
+}
+
+// ── 입력 모드 ──
+function setMode(mode) {
+  inputMode = mode;
+  document.getElementById('modeText').classList.toggle('active', mode === 'text');
+  document.getElementById('modeImage').classList.toggle('active', mode === 'image');
+  document.getElementById('inputText').style.display = mode === 'text' ? '' : 'none';
+  document.getElementById('inputImage').style.display = mode === 'image' ? '' : 'none';
+}
+
+// ── 이미지 업로드 ──
+const fbDropZone = document.getElementById('fbDropZone');
+const fbFileInput = document.getElementById('fbFileInput');
+fbDropZone.addEventListener('click', () => fbFileInput.click());
+fbFileInput.addEventListener('change', e => { if (e.target.files[0]) setFbFile(e.target.files[0]); });
+fbDropZone.addEventListener('dragover', e => { e.preventDefault(); fbDropZone.classList.add('dragging'); });
+fbDropZone.addEventListener('dragleave', () => fbDropZone.classList.remove('dragging'));
+fbDropZone.addEventListener('drop', e => {
+  e.preventDefault(); fbDropZone.classList.remove('dragging');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) setFbFile(f);
+});
+function setFbFile(file) {
+  fbFile = file;
+  document.getElementById('fbPreviewImg').src = URL.createObjectURL(file);
+  document.getElementById('fbPreview').style.display = '';
+}
+function clearFbImage() { fbFile = null; document.getElementById('fbPreview').style.display = 'none'; fbFileInput.value = ''; }
+
+// ── 피드백 제출 ──
+async function submitFeedback() {
+  const textContent = document.getElementById('textContent').value.trim();
+  const hasText = inputMode === 'text' && textContent;
+  const hasImg  = inputMode === 'image' && fbFile;
+  if (!hasText && !hasImg) { showToast('문자 내용 또는 이미지를 입력해주세요.', false); return; }
+
+  const btn = document.getElementById('btnSubmit');
+  btn.disabled = true; btn.textContent = '제출 중...';
+
+  const formData = new FormData();
+  formData.append('given_grade', document.getElementById('givenGrade').value);
+  formData.append('correct_grade', document.getElementById('correctGrade').value);
+  formData.append('reason', document.getElementById('reason').value);
+  formData.append('text_content', hasText ? textContent : '[이미지 첨부 피드백]');
+  if (hasImg) formData.append('image', fbFile);
+
+  try {
+    const res = await fetch('/feedback', { method: 'POST', body: formData });
+    if (res.ok) {
+      showToast('피드백이 제출됐습니다. 감사합니다! 🎉', true);
+      document.getElementById('textContent').value = '';
+      document.getElementById('reason').value = '';
+      clearFbImage();
+    } else { throw new Error(); }
+  } catch { showToast('제출에 실패했습니다. 서버 연결을 확인해주세요.', false); }
+  finally { btn.disabled = false; btn.textContent = '피드백 제출'; }
+}
+
+function showToast(msg, ok) {
+  const toast = document.getElementById('toast');
+  toast.className = 'toast ' + (ok ? 'toast-ok' : 'toast-err');
+  toast.textContent = msg;
+  toast.style.display = '';
+  setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+// ── 순위 로딩 ──
+async function loadRanking() {
+  document.getElementById('rankingList').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-3);">불러오는 중...</div>';
+  try {
+    const res = await fetch('/top-urls?limit=50');
+    const data = await res.json();
+    rankingData = data.top_urls || [];
+    buildPieChart(rankingData);
+    filteredData = rankingData;
+    currentPage = 1;
+    renderPage();
+  } catch {
+    document.getElementById('rankingList').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--danger);">서버에 연결할 수 없습니다.</div>';
+  }
+}
+
+document.getElementById('urlSearch').addEventListener('input', filterList);
+document.getElementById('catFilter').addEventListener('change', filterList);
+
+function filterList() {
+  if (!rankingData) return;
+  const q = document.getElementById('urlSearch').value.trim().toLowerCase();
+  const cat = document.getElementById('catFilter').value;
+  filteredData = rankingData;
+  if (q) filteredData = filteredData.filter(i => i.url.toLowerCase().includes(q));
+  if (cat) filteredData = filteredData.filter(i => i.category === cat);
+  currentPage = 1;
+  renderPage();
+}
+
+function renderPage() {
+  const el = document.getElementById('rankingList');
+  if (!filteredData.length) {
+    el.innerHTML = '<div style="text-align:center;padding:1.5rem;color:var(--text-3);">검색 결과가 없습니다.</div>';
+    document.getElementById('pagination').innerHTML = '';
+    return;
+  }
+  const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const page = filteredData.slice(start, start + PAGE_SIZE);
+  const MEDALS = ['🥇','🥈','🥉'];
+  el.innerHTML = page.map((item, idx) => {
+    const i = start + idx;
+    const color = CAT_COLORS[item.category] || '#dc2626';
+    const catName = CAT_NAMES[item.category] || item.category;
+    const isMedal = i < 3;
+    const bg = i === 0 ? '#fff7ed' : 'white';
+    const border = isMedal ? `2px solid ${color}` : '1px solid var(--border)';
+    const rankDisp = isMedal
+      ? `<span style="font-size:1.4rem;">${MEDALS[i]}</span>`
+      : `<span style="font-size:0.85rem;font-weight:800;color:var(--text-2);">${i+1}위</span>`;
+    return `<div class="rank-item" style="background:${bg};border:${border};">
+      <div class="rank-num">${rankDisp}</div>
+      <div class="rank-url" title="${item.url}">${item.url}</div>
+      <span class="rank-cat-badge" style="background:${color}22;color:${color};border:1px solid ${color}44;">${catName}</span>
+      <div class="rank-count">탐지 <strong>${item.count}</strong>회</div>
+    </div>`;
+  }).join('');
+
+  // 페이지네이션
+  const pg = document.getElementById('pagination');
+  if (totalPages <= 1) { pg.innerHTML = ''; return; }
+  let btns = `<button class="pg-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹</button>`;
+  for (let p = 1; p <= totalPages; p++) {
+    btns += `<button class="pg-btn ${p===currentPage?'active':''}" onclick="goPage(${p})">${p}</button>`;
+  }
+  btns += `<button class="pg-btn" onclick="goPage(${currentPage+1})" ${currentPage===totalPages?'disabled':''}>›</button>`;
+  pg.innerHTML = btns;
+}
+
+function goPage(p) {
+  const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
+  if (p < 1 || p > totalPages) return;
+  currentPage = p;
+  renderPage();
+}
+
+// ── 파이 차트 ──
+function buildPieChart(data) {
+  const totals = {};
+  data.forEach(i => {
+    if (i.category && i.category !== 'PERSONAL') {
+      totals[i.category] = (totals[i.category] || 0) + i.count;
+    }
+  });
+  const total = Object.values(totals).reduce((a, b) => a + b, 0);
+  const pieEl = document.getElementById('pieChart');
+  const emptyEl = document.getElementById('pieEmpty');
+  if (!total) { pieEl.style.display = 'none'; emptyEl.style.display = ''; return; }
+  pieEl.style.display = '';
+  emptyEl.style.display = 'none';
+
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const cx = 70, cy = 70, r = 60;
+  let startAngle = -Math.PI / 2;
+  let paths = '';
+  let legendHTML = '';
+
+  sorted.forEach(([cat, cnt]) => {
+    const pct = cnt / total;
+    const angle = pct * 2 * Math.PI;
+    const endAngle = startAngle + angle;
+    const x1 = cx + r * Math.cos(startAngle);
+    const y1 = cy + r * Math.sin(startAngle);
+    const x2 = cx + r * Math.cos(endAngle);
+    const y2 = cy + r * Math.sin(endAngle);
+    const large = angle > Math.PI ? 1 : 0;
+    const color = CAT_COLORS[cat] || '#94a3b8';
+    paths += `<path d="M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z" fill="${color}" stroke="white" stroke-width="1.5"/>`;
+    legendHTML += `<div class="pie-leg-item"><div class="pie-dot" style="background:${color};"></div><span style="color:var(--text-2);">${CAT_NAMES[cat]||cat}</span><span style="margin-left:auto;padding-left:8px;font-weight:700;color:var(--text);">${Math.round(pct*100)}%</span></div>`;
+    startAngle = endAngle;
+  });
+
+  document.getElementById('pieSvg').innerHTML = paths;
+  document.getElementById('pieLegend').innerHTML = legendHTML;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CatchSmishing — AI 스미싱 탐지 서비스</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+body {
+  background: linear-gradient(135deg, #e8f2fe 0%, #f4f8ff 35%, #f0edff 70%, #f8faff 100%);
+  min-height: 100vh;
+}
+
+/* ─── 2열 대시보드 ─── */
+.dash {
+  margin-top: var(--nav-h);
+  height: calc(100vh - var(--nav-h));
+  display: grid;
+  grid-template-columns: 5.5fr 6.5fr;
+}
+
+/* ─── 왼쪽 패널 ─── */
+.dash-left {
+  padding: 2.4rem 2.2rem 2.4rem 2.6rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2.2rem;
+  border-right: 1px solid rgba(191,219,254,0.7);
+}
+
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.85); color: var(--primary);
+  border: 1px solid #bfdbfe; border-radius: 20px;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.4px;
+  padding: 6px 16px; width: fit-content;
+  backdrop-filter: blur(4px);
+}
+.hero { display: flex; flex-direction: column; gap: 1rem; }
+.hero h1 {
+  font-size: clamp(2.2rem, 3vw, 3.5rem);
+  font-weight: 900; color: var(--text);
+  line-height: 1.2; letter-spacing: -1px;
+}
+.hero h1 em { color: var(--primary); font-style: normal; }
+.hero-desc { font-size: 16px; color: var(--text-3); line-height: 1.82; }
+.hero-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ─── 통계 카드 (SVG 차트 포함) ─── */
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.stat-card {
+  background: rgba(255,255,255,0.88);
+  border: 1px solid rgba(191,219,254,0.6);
+  border-radius: 14px; padding: 1rem 0.9rem 0.8rem;
+  box-shadow: 0 2px 8px rgba(37,99,235,0.07);
+  text-align: center;
+  backdrop-filter: blur(4px);
+}
+.stat-chart-area { height: 64px; display: flex; align-items: center; justify-content: center; }
+.stat-title { font-size: 11.5px; font-weight: 700; color: var(--text-2); margin-bottom: 2px; }
+.stat-sub { font-size: 10.5px; color: var(--text-3); line-height: 1.4; }
+
+/* ─── 오른쪽 패널 ─── */
+.dash-right {
+  padding: 1.8rem 2.2rem 1.8rem 1.8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  overflow-y: auto;
+}
+
+/* ─── 섹션 헤더 ─── */
+.sec-hdr {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 0.8rem;
+}
+.sec-hdr h2 { font-size: 18px; font-weight: 800; color: var(--text); }
+.sec-hdr small { font-size: 12px; color: #94a3b8; }
+.sec-bar { width: 4px; height: 16px; border-radius: 2px; flex-shrink: 0; }
+
+/* ─── 스미싱 유형 카드 ─── */
+.types-section {
+  display: flex;
+  flex-direction: column;
+}
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+.type-card {
+  background: rgba(255,255,255,0.92);
+  border: 1px solid rgba(226,232,240,0.8);
+  border-radius: 13px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: box-shadow 0.22s, transform 0.22s, background 0.22s, border-color 0.22s;
+}
+.type-card:hover {
+  background: rgba(15, 23, 42, 0.88);
+  border-color: rgba(100,116,139,0.3);
+  box-shadow: 0 6px 22px rgba(0,0,0,0.28);
+  transform: translateY(-2px);
+}
+.type-card-body {
+  padding: 0.85rem 0.95rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+/* 평상시 / 호버 레이어 */
+.type-normal { display: flex; flex-direction: column; flex: 1; }
+.type-card:hover .type-normal { display: none; }
+.type-hover { display: none; flex-direction: column; flex: 1; }
+.type-card:hover .type-hover { display: flex; }
+/* 평상시 스타일 */
+.type-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.type-head-left { display: flex; align-items: center; gap: 7px; }
+.type-icon { font-size: 1rem; }
+.type-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.type-badge {
+  font-size: 10.5px; font-weight: 700; padding: 2px 7px;
+  border-radius: 5px; color: white; flex-shrink: 0;
+  white-space: nowrap;
+}
+.type-desc { font-size: 13px; color: var(--text-3); line-height: 1.6; }
+.type-example {
+  background: #f8fafc; border-left: 2px solid #e2e8f0;
+  padding: 5px 8px; border-radius: 0 6px 6px 0;
+  font-size: 11.5px; color: #94a3b8; font-style: italic; line-height: 1.5;
+  margin-top: 6px;
+}
+/* 호버 스타일 */
+.type-hover-head {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 14px; font-weight: 800; color: #f1f5f9;
+  margin-bottom: 10px;
+}
+.type-hover-tips {
+  list-style: none; display: flex; flex-direction: column; gap: 5px;
+}
+.type-hover-tips li {
+  font-size: 12.5px; color: #94a3b8; line-height: 1.6;
+  padding-left: 14px; position: relative;
+}
+.type-hover-tips li::before {
+  content: '→'; position: absolute; left: 0;
+  color: #60a5fa; font-weight: 700; font-size: 10px;
+}
+
+/* ─── 예방 수칙 ─── */
+.tips-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tip-card {
+  display: flex; gap: 10px;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid rgba(191,219,254,0.5);
+  border-radius: 11px; padding: 0.8rem 0.95rem;
+  box-shadow: 0 1px 3px rgba(37,99,235,0.05);
+}
+.tip-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--primary-light); font-size: 0.9rem;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.tip-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.tip-desc { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
+
+/* ─── KISA 박스 ─── */
+.kisa-box {
+  background: rgba(255,255,255,0.85);
+  border: 1px solid rgba(191,219,254,0.6);
+  border-radius: 11px; padding: 0.75rem 1.4rem;
+  text-align: center; font-size: 13px; color: #1d4ed8;
+}
+
+/* ─── 반응형 ─── */
+@media (max-width: 1100px) {
+  .dash { grid-template-columns: 1fr; height: auto; }
+  .dash-left { border-right: none; border-bottom: 1px solid rgba(191,219,254,0.7); }
+  .dash-right { grid-template-rows: auto; overflow: visible; }
+  .types-section { height: auto; }
+  .type-grid { grid-template-rows: auto; grid-auto-rows: auto; height: auto; }
+}
+@media (max-width: 680px) {
+  .dash { margin-top: var(--nav-h); }
+  .dash-left { padding: 1.2rem 0.9rem; }
+  .dash-right { padding: 1.2rem 0.9rem; }
+  .hero h1 { font-size: 1.7rem; }
+  .hero-desc { font-size: 13px; }
+  .stat-row { gap: 6px; }
+  .stat-card { padding: 0.7rem 0.5rem; }
+  .stat-title { font-size: 10px; }
+  .stat-sub { font-size: 9.5px; }
+  .type-grid { grid-template-columns: 1fr 1fr; gap: 6px; align-items: stretch; }
+  .type-card { padding: 0.65rem 0.7rem; }
+  .type-card .type-card-body { height: 100%; display: flex; flex-direction: column; }
+  .type-normal, .type-hover { flex: 1; }
+  .type-card:hover { background: var(--white); border-color: var(--border); transform: none; box-shadow: var(--shadow-sm); }
+  .type-card:hover .type-normal { display: flex; }
+  .type-card:hover .type-hover { display: none; }
+  .type-card.touch-active { background: rgba(15,23,42,0.88) !important; border-color: rgba(100,116,139,0.3) !important; }
+  .type-card.touch-active .type-normal { display: none; }
+  .type-card.touch-active .type-hover { display: flex; }
+  .type-title { font-size: 12px; }
+  .tips-grid { grid-template-columns: 1fr; gap: 6px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-brand">🛡️ Catch<span>Smishing</span></a>
+  <ul class="nav-links">
+    <li><a href="/" class="active">홈</a></li>
+    <li><a href="/analyze-page">분석</a></li>
+    <li><a href="/feedback-page">피드백</a></li>
+  </ul>
+</nav>
+
+<div class="dash">
+
+  <!-- ═══ 왼쪽 패널 ═══ -->
+  <div class="dash-left">
+    <div class="hero">
+      <div class="hero-badge">🤖 AI POWERED · KISA 기반</div>
+      <h1>스미싱 문자,<br><em>AI로 즉시 판별</em>합니다</h1>
+      <p class="hero-desc">
+        이미지·텍스트·QR 코드를 업로드하면<br>
+        Gemini Vision + NLP + URL 보안 분석으로 위험도를 판정합니다.
+      </p>
+      <div class="hero-btns">
+        <a href="/analyze-page" class="btn btn-primary btn-lg">🔍 지금 분석하기</a>
+      </div>
+    </div>
+
+    <div class="stat-row">
+
+      <!-- AI 분석 정확도 분포 (벨 커브) -->
+      <div class="stat-card">
+        <div class="stat-title">AI 분석 정확도 분포</div>
+        <div class="stat-chart-area">
+          <svg width="110" height="58" viewBox="0 0 110 58">
+            <defs>
+              <linearGradient id="bg1" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#6366f1" stop-opacity="0.15"/>
+                <stop offset="50%" stop-color="#2563eb" stop-opacity="0.5"/>
+                <stop offset="100%" stop-color="#6366f1" stop-opacity="0.15"/>
+              </linearGradient>
+            </defs>
+            <path d="M5,52 C12,52 18,50 24,42 C30,34 34,18 42,10 C46,6 49,5 55,5 C61,5 64,6 68,10 C76,18 80,34 86,42 C92,50 98,52 105,52"
+                  fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round"/>
+            <path d="M5,52 C12,52 18,50 24,42 C30,34 34,18 42,10 C46,6 49,5 55,5 C61,5 64,6 68,10 C76,18 80,34 86,42 C92,50 98,52 105,52 L105,52 L5,52Z"
+                  fill="url(#bg1)"/>
+            <line x1="84" y1="18" x2="84" y2="52" stroke="#2563eb" stroke-width="1.3" stroke-dasharray="3,2" opacity="0.7"/>
+            <text x="55" y="30" text-anchor="middle" fill="#2563eb" font-size="13" font-weight="900" font-family="sans-serif">96%</text>
+            <text x="55" y="42" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="sans-serif">스코어 분포</text>
+            <line x1="5" y1="52" x2="105" y2="52" stroke="#e2e8f0" stroke-width="0.8"/>
+            <text x="20" y="57" fill="#cbd5e1" font-size="7" text-anchor="middle" font-family="sans-serif">80</text>
+            <text x="55" y="57" fill="#cbd5e1" font-size="7" text-anchor="middle" font-family="sans-serif">90</text>
+            <text x="90" y="57" fill="#cbd5e1" font-size="7" text-anchor="middle" font-family="sans-serif">100</text>
+          </svg>
+        </div>
+        <div class="stat-sub">카테고리 분류 정확도</div>
+      </div>
+
+      <!-- AI 분석 엔진 성능 현황 (도넛) -->
+      <div class="stat-card">
+        <div class="stat-title">AI 분석 엔진 성능 현황</div>
+        <div class="stat-chart-area">
+          <svg width="110" height="58" viewBox="0 0 110 58">
+            <!-- 원둘레 2π×19 ≈ 119.4 -->
+            <circle cx="42" cy="29" r="19" fill="none" stroke="#f1f5f9" stroke-width="8"/>
+            <!-- NLP 40% = 47.8 -->
+            <circle cx="42" cy="29" r="19" fill="none" stroke="#2563eb" stroke-width="8"
+                    stroke-dasharray="47.8 71.6" stroke-dashoffset="0"
+                    transform="rotate(-90 42 29)"/>
+            <!-- URL 35% = 41.8 -->
+            <circle cx="42" cy="29" r="19" fill="none" stroke="#6366f1" stroke-width="8"
+                    stroke-dasharray="41.8 77.6" stroke-dashoffset="-47.8"
+                    transform="rotate(-90 42 29)"/>
+            <!-- Gemini 25% = 29.9 -->
+            <circle cx="42" cy="29" r="19" fill="none" stroke="#f59e0b" stroke-width="8"
+                    stroke-dasharray="29.9 89.5" stroke-dashoffset="-89.6"
+                    transform="rotate(-90 42 29)"/>
+            <text x="42" y="32" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="900" font-family="sans-serif">3종</text>
+            <!-- 범례 -->
+            <circle cx="72" cy="16" r="3.5" fill="#2563eb"/>
+            <text x="78" y="19.5" fill="#64748b" font-size="8" font-family="sans-serif">NLP</text>
+            <circle cx="72" cy="28" r="3.5" fill="#6366f1"/>
+            <text x="78" y="31.5" fill="#64748b" font-size="8" font-family="sans-serif">URL</text>
+            <circle cx="72" cy="40" r="3.5" fill="#f59e0b"/>
+            <text x="78" y="43.5" fill="#64748b" font-size="8" font-family="sans-serif">Gemini</text>
+          </svg>
+        </div>
+        <div class="stat-sub">AI 분석 엔진 통합</div>
+      </div>
+
+      <!-- 카테고리별 탐지 비율 (바차트) -->
+      <div class="stat-card">
+        <div class="stat-title">카테고리별 탐지 비율</div>
+        <div class="stat-chart-area">
+          <svg width="110" height="58" viewBox="0 0 110 58">
+            <line x1="6" y1="8" x2="6" y2="48" stroke="#e2e8f0" stroke-width="0.8"/>
+            <line x1="6" y1="48" x2="106" y2="48" stroke="#e2e8f0" stroke-width="0.8"/>
+            <line x1="6" y1="28" x2="106" y2="28" stroke="#e2e8f0" stroke-width="0.6" stroke-dasharray="3,3"/>
+            <!-- 금융 28% -->
+            <rect x="8"  y="8"  width="12" height="40" fill="#dc2626" rx="2" opacity="0.85"/>
+            <!-- 배송 25% -->
+            <rect x="23" y="12" width="12" height="36" fill="#f59e0b" rx="2" opacity="0.85"/>
+            <!-- 공공 20% -->
+            <rect x="38" y="19" width="12" height="29" fill="#7c3aed" rx="2" opacity="0.85"/>
+            <!-- 인증 15% -->
+            <rect x="53" y="27" width="12" height="21" fill="#ea580c" rx="2" opacity="0.85"/>
+            <!-- 홍보 8% -->
+            <rect x="68" y="37" width="12" height="11" fill="#0891b2" rx="2" opacity="0.85"/>
+            <!-- 지인 4% -->
+            <rect x="83" y="42" width="12" height="6"  fill="#2563eb" rx="2" opacity="0.85"/>
+            <text x="14" y="56" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="sans-serif">금융</text>
+            <text x="29" y="56" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="sans-serif">배송</text>
+            <text x="44" y="56" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="sans-serif">공공</text>
+            <text x="59" y="56" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="sans-serif">인증</text>
+            <text x="74" y="56" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="sans-serif">홍보</text>
+            <text x="89" y="56" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="sans-serif">지인</text>
+          </svg>
+        </div>
+        <div class="stat-sub">주요 스미싱 유형 탐지 비중</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══ 오른쪽 패널 ═══ -->
+  <div class="dash-right">
+
+    <!-- 스미싱 유형 (flex:1 → 공간 채움) -->
+    <div class="types-section">
+      <div class="sec-hdr">
+        <div class="sec-bar" style="background:var(--primary)"></div>
+        <h2>요즘 유행하는 스미싱 유형</h2>
+        <small>KISA 2024 통계 기반</small>
+      </div>
+      <div class="type-grid" id="typeGrid"></div>
+    </div>
+
+    <!-- 예방 수칙 -->
+    <div>
+      <div class="sec-hdr">
+        <div class="sec-bar" style="background:#6366f1"></div>
+        <h2>스미싱 피해 예방 수칙</h2>
+      </div>
+      <div class="tips-grid" id="tipsGrid"></div>
+    </div>
+
+    <!-- KISA -->
+    <div class="kisa-box">
+      📞 피해 발생 시: <strong>KISA 불법스팸대응센터 118</strong> &nbsp;|&nbsp; 경찰청 사이버수사국 <strong>182</strong>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const CAT_COLORS = {
+  FINANCE:'#dc2626', DELIVERY:'#f59e0b', GOVERNMENT:'#7c3aed',
+  PROMOTION:'#0891b2', AUTH:'#ea580c', WORK:'#2563eb',
+};
+const BADGES = {
+  DELIVERY:{ label:'일반 탐지', bg:'#fef9c3', color:'#a16207' },
+  FINANCE:{ label:'고위험', bg:'#fee2e2', color:'#b91c1c' },
+  GOVERNMENT:{ label:'공공기관', bg:'#ede9fe', color:'#6d28d9' },
+  AUTH:{ label:'신뢰형', bg:'#ffedd5', color:'#c2410c' },
+  PROMOTION:{ label:'사기형', bg:'#e0f2fe', color:'#0369a1' },
+  WORK:{ label:'기관 사칭', bg:'#dbeafe', color:'#1d4ed8' },
+};
+const TYPES = [
+  { cat:'DELIVERY', icon:'📦', title:'배송 사기',
+    desc:'택배 미수령·주소 오류를 빙자해 개인정보 또는 소액 결제를 유도합니다.',
+    ex:'[CJ대한통운] 주소지 불일치로 배송이 보류되었습니다. 확인 → bit.ly/...',
+    tips:['공식 앱에서 운송장 번호로 직접 배송 조회', '링크 접속 전 택배사 도메인인지 확인'] },
+  { cat:'FINANCE',  icon:'💳', title:'금융 사기',
+    desc:'은행·카드사를 사칭해 계좌 인증, 미승인 거래 확인을 명목으로 접속을 유도합니다.',
+    ex:'[신한카드] 비정상 거래가 감지되었습니다. 본인 확인 → http://...',
+    tips:['은행·카드사는 문자로 링크를 발송하지 않음', '의심 시 카드 뒷면 고객센터로 직접 전화', 'ARS·OTP를 통한 이체 요구 즉시 중단'] },
+  { cat:'GOVERNMENT', icon:'🏛️', title:'공공기관 사칭',
+    desc:'경찰청·검찰·건강보험공단 등을 사칭해 과태료·소환 통보로 링크를 클릭하게 합니다.',
+    ex:'[교통민원24] 미납 과태료가 있습니다. 납부 기한 내 처리 → http://...',
+    tips:['정부기관은 문자 링크로 벌금·과태료를 고지하지 않음', '정부24·건강보험공단 공식 사이트 직접 접속'] },
+  { cat:'AUTH', icon:'🔐', title:'계정 탈취',
+    desc:'포털·SNS 계정 해킹·정지를 빙자해 비밀번호를 탈취합니다.',
+    ex:'[카카오] 비정상 로그인이 감지되었습니다. 재인증 필요 → http://...',
+    tips:['비밀번호 변경은 반드시 공식 앱에서만', '문자 속 링크로 로그인 금지'] },
+  { cat:'PROMOTION', icon:'📈', title:'투자·홍보 유도',
+    desc:'고수익 투자 리딩방, 공모주 당첨 등을 미끼로 개인정보나 투자금을 탈취합니다.',
+    ex:'[주식알림] 금일 공모주 청약 마감! 지금 확인하세요 → http://...',
+    tips:['원금·수익 보장 광고 믿지 말기', '금감원 금융소비자포털에서 등록 여부 확인', '오픈채팅방 투자 제안은 즉시 차단'] },
+  { cat:'WORK', icon:'👤', title:'지인 사칭',
+    desc:'지인·가족을 사칭해 청첩장·부고를 보내며 APK 설치나 송금을 유도합니다.',
+    ex:'엄마, 저 폰 고장났어. 이 링크에서 청첩장 확인해줘 → http://...',
+    tips:['급한 송금 요청은 반드시 본인 확인 먼저', 'APK 파일 설치 금지'] },
+];
+const TIPS = [
+  { icon:'🚫', title:'출처 불명 링크 클릭 금지', desc:'문자·SNS의 단축 URL은 클릭 전 이 서비스로 반드시 확인하세요.' },
+  { icon:'🏦', title:'공식 앱/웹사이트 직접 접속', desc:'택배·은행·정부기관은 공식 앱이나 검색을 통해 직접 접속하세요.' },
+  { icon:'🔒', title:'개인정보·비밀번호 입력 주의', desc:'문자 링크를 통한 개인정보 입력 요구는 100% 의심하세요.' },
+  { icon:'📞', title:'의심 문자 신고', desc:'KISA 불법스팸대응센터 118 또는 문자 전달로 신고 가능합니다.' },
+];
+
+document.getElementById('typeGrid').innerHTML = TYPES.map(t => {
+  const b = BADGES[t.cat];
+  const tipsHtml = t.tips.map(tip => `<li>${tip}</li>`).join('');
+  return `
+  <div class="type-card">
+    <div class="type-card-body">
+      <div class="type-normal">
+        <div class="type-head">
+          <div class="type-head-left">
+            <span class="type-icon">${t.icon}</span>
+            <span class="type-title">${t.title}</span>
+          </div>
+          <span class="type-badge" style="background:${b.bg};color:${b.color};">${b.label}</span>
+        </div>
+        <div class="type-desc">${t.desc}</div>
+        <div class="type-example">${t.ex}</div>
+      </div>
+      <div class="type-hover">
+        <div class="type-hover-head">${t.icon} ${t.title} 예방법</div>
+        <ul class="type-hover-tips">${tipsHtml}</ul>
+      </div>
+    </div>
+  </div>`;
+}).join('');
+
+if ('ontouchstart' in window) {
+  document.querySelectorAll('.type-card').forEach(card => {
+    card.addEventListener('touchstart', e => {
+      e.preventDefault();
+      const isActive = card.classList.contains('touch-active');
+      document.querySelectorAll('.type-card').forEach(c => c.classList.remove('touch-active'));
+      if (!isActive) card.classList.add('touch-active');
+    }, { passive: false });
+  });
+}
+
+document.getElementById('tipsGrid').innerHTML = TIPS.map(t => `
+  <div class="tip-card">
+    <div class="tip-icon">${t.icon}</div>
+    <div>
+      <div class="tip-title">${t.title}</div>
+      <div class="tip-desc">${t.desc}</div>
+    </div>
+  </div>
+`).join('');
+</script>
+</body>
+</html>

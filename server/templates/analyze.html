@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>문자 분석 — CatchSmishing</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+body {
+  background: linear-gradient(135deg, #e8f2fe 0%, #f4f8ff 35%, #f0edff 70%, #f8faff 100%);
+  min-height: 100vh;
+}
+body .card { border-color: rgba(191,219,254,0.6); }
+.nav { zoom: 1.1; }
+.analyze-dash {
+  padding-top: calc(68px + 2rem);
+  min-height: 100vh;
+}
+.analyze-container {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+.analyze-layout {
+  display: grid;
+  grid-template-columns: 489px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+.panel-label {
+  font-size: 17px; font-weight: 700; color: var(--text-2);
+  margin-bottom: 0.8rem;
+}
+/* Camera */
+#cameraContainer { margin-top: 1rem; }
+#cameraContainer video { width: 100%; border-radius: var(--radius-sm); }
+.paste-hint {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--primary-light); border: 1px dashed #93c5fd;
+  border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; color: #1d4ed8; margin-top: 0.7rem; cursor: pointer;
+  transition: background 0.15s;
+}
+.paste-hint:hover { background: #dbeafe; }
+
+/* Result tabs */
+.result-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 1.2rem; }
+.rtab {
+  padding: 9px 18px; font-size: 14px; font-weight: 700;
+  color: var(--text-3); border: none; background: none; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.rtab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* Keyword chips */
+.keyword-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 700; margin: 3px;
+}
+/* Gemini card */
+.gemini-card {
+  background: white; border-radius: 12px; padding: 1rem;
+  margin-bottom: 0.7rem; border: 1px solid var(--border);
+}
+.gemini-badge {
+  font-size: 11px; font-weight: 700; color: #0ea5e9;
+  margin-left: 6px; background: #f0f9ff; padding: 1px 7px; border-radius: 4px;
+}
+.gemini-badge-v { color: #7c3aed; background: #f5f3ff; }
+
+/* Action guide */
+.action-guide {
+  padding: 0.85rem 1.1rem; border-radius: 10px;
+  font-size: 13.5px; margin-bottom: 0.8rem;
+}
+
+/* Summary card */
+.summary-card {
+  border-radius: 12px; padding: 1.1rem 1.3rem; margin-bottom: 0.8rem;
+  border: 1.5px solid;
+}
+.summary-title { font-size: 14px; font-weight: 700; margin-bottom: 0.5rem; }
+.summary-text { font-size: 13.5px; color: var(--text-2); line-height: 1.7; }
+
+/* Copy area */
+.copy-area textarea {
+  height: 100px; font-size: 13px; resize: none;
+  background: var(--bg); color: var(--text-2);
+}
+
+/* Loading overlay */
+#loadingState { text-align: center; padding: 3rem 1rem; }
+#loadingState p { font-size: 14px; color: var(--text-3); margin-top: 1rem; }
+
+/* KISA link */
+.kisa-link {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--danger-bg); border: 1.5px solid var(--danger);
+  border-radius: 12px; padding: 0.9rem 1.2rem;
+  text-decoration: none; margin-top: 0.6rem;
+  transition: background 0.15s;
+}
+.kisa-link:hover { background: #fee2e2; }
+.kisa-link-text strong { font-size: 14px; color: var(--danger); display: block; }
+.kisa-link-text small { font-size: 12px; color: #ef4444; }
+
+/* Feedback link */
+.feedback-prompt {
+  display: flex; align-items: center; justify-content: space-between;
+  background: white; border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.9rem 1.2rem; margin-top: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  .analyze-layout { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-brand">🛡️ Catch<span>Smishing</span></a>
+  <ul class="nav-links">
+    <li><a href="/">홈</a></li>
+    <li><a href="/analyze-page" class="active">분석</a></li>
+    <li><a href="/feedback-page">피드백</a></li>
+  </ul>
+</nav>
+
+<div class="analyze-dash">
+  <div class="analyze-container">
+    <div style="margin-bottom:1.2rem;">
+      <div style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:6px;">🔍 문자 분석</div>
+      <div style="font-size:15px;color:var(--text-3);">이미지·텍스트·QR 코드를 AI로 즉시 분석합니다</div>
+    </div>
+    <div class="analyze-layout">
+
+  <!-- ── 왼쪽: 입력 ── -->
+      <div class="card">
+          <div class="panel-label">📥 데이터 입력</div>
+
+          <!-- 탭 -->
+          <div class="tabs" style="margin-bottom:1.2rem;">
+            <button class="tab-btn active" data-tab="tab-image">🖼️ 이미지/QR</button>
+            <button class="tab-btn" data-tab="tab-text">📝 텍스트</button>
+            <button class="tab-btn" data-tab="tab-camera">📲 QR 스캔</button>
+          </div>
+
+          <!-- 이미지 탭 -->
+          <div class="tab-content active" id="tab-image">
+            <div class="drop-zone" id="dropZone">
+              <input type="file" id="fileInput" accept="image/png,image/jpeg,image/jpg">
+              <div class="drop-icon">📁</div>
+              <div class="drop-text">
+                <strong>클릭</strong> 또는 이미지를 여기에 드래그하세요<br>
+                <small>PNG · JPG · JPEG 지원</small>
+              </div>
+            </div>
+            <div class="paste-hint" id="pasteHint" title="Ctrl+V로도 붙여넣기 가능합니다">
+              📋 클립보드 이미지 붙여넣기 (Ctrl+V)
+            </div>
+            <div class="preview-box" id="previewBox" style="display:none;">
+              <img id="previewImg" src="" alt="미리보기">
+              <button class="preview-remove" id="previewRemove" title="제거">✕</button>
+            </div>
+          </div>
+
+          <!-- 텍스트 탭 -->
+          <div class="tab-content" id="tab-text">
+            <textarea id="textInput" placeholder="예) [Web발신] [KB국민은행] 본인 확인이 필요합니다. http://..."></textarea>
+          </div>
+
+          <!-- QR 카메라 탭 -->
+          <div class="tab-content" id="tab-camera">
+            <div style="text-align:center;padding:1.5rem 0;">
+              <button class="btn btn-secondary btn-full" id="btnCameraToggle">📷 카메라 켜기</button>
+              <div id="cameraContainer" style="display:none;">
+                <div id="qrReader" style="width:100%;"></div>
+                <p style="font-size:12px;color:var(--text-3);margin-top:0.5rem;">QR코드를 카메라에 비춰주세요</p>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:1.2rem;">
+            <button class="btn btn-primary btn-full" id="btnAnalyze">AI 정밀 분석 실행</button>
+          </div>
+      </div>
+
+  <!-- ── 오른쪽: 결과 ── -->
+      <div class="card">
+      <div class="panel-label">📊 분석 결과</div>
+
+          <!-- 빈 상태 -->
+          <div class="empty-state" id="emptyState">
+            <div class="empty-state-icon">🛡️</div>
+            <p>이미지 또는 텍스트를 입력하고<br>분석 버튼을 눌러주세요.</p>
+          </div>
+
+          <!-- 로딩 -->
+          <div id="loadingState" style="display:none;">
+            <div class="spinner"></div>
+            <p id="loadingText">분석 중...</p>
+            <button class="btn btn-secondary" style="margin-top:1rem;" id="btnStop">⛔ 중단</button>
+          </div>
+
+          <!-- 결과 -->
+          <div id="resultArea" style="display:none;">
+
+            <!-- 결과 탭 -->
+            <div class="result-tabs">
+              <button class="rtab active" data-rtab="rtab-result">결과</button>
+              <button class="rtab" data-rtab="rtab-evidence">탐지 근거</button>
+            </div>
+
+            <!-- 결과 탭 내용 -->
+            <div id="rtab-result">
+              <div id="gradeCard" class="grade-card"></div>
+              <div id="lowConfWarn" style="display:none;" class="alert alert-warn">
+                ⚠️ <strong>AI 분석 신호가 미약합니다.</strong> 명확한 위험 패턴이 감지되지 않았습니다.
+                의심스럽다면 발신 번호를 검색하거나 해당 기관에 직접 문의하세요.
+              </div>
+              <div id="actionGuide" class="action-guide"></div>
+              <div id="kisaLink" style="display:none;">
+                <a href="https://spam.kisa.or.kr" target="_blank" class="kisa-link">
+                  <span style="font-size:1.3rem;">🚨</span>
+                  <div class="kisa-link-text">
+                    <strong>KISA 불법스팸대응센터 신고하기</strong>
+                    <small>spam.kisa.or.kr · 전화 118</small>
+                  </div>
+                  <span style="margin-left:auto;color:var(--danger);">→</span>
+                </a>
+              </div>
+              <div style="margin-top:1rem;">
+                <div style="font-size:13px;color:var(--text-3);margin-bottom:4px;">결과 복사</div>
+                <div class="copy-area">
+                  <textarea id="shareText" readonly></textarea>
+                  <button class="btn btn-secondary" style="margin-top:6px;" id="btnCopy">📋 복사</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 탐지 근거 탭 내용 -->
+            <div id="rtab-evidence" style="display:none;">
+              <div id="summaryCard"></div>
+              <div id="geminiWarn" style="display:none;" class="alert alert-warn">
+                ⚠️ AI 문맥 분석을 일시적으로 이용할 수 없어 NLP 및 URL 분석 결과만 반영되었습니다.
+              </div>
+              <div id="geminiTextCard" class="gemini-card" style="display:none;"></div>
+              <div id="vlmCard" class="gemini-card" style="display:none;"></div>
+              <div id="keywordCard" class="gemini-card"></div>
+              <div id="textReasonsCard" class="gemini-card" style="display:none;"></div>
+              <div id="urlReasonsCard" class="gemini-card" style="display:none;"></div>
+            </div>
+
+            <!-- 피드백 유도 -->
+            <div class="feedback-prompt">
+              <span style="font-size:14px;color:var(--text-3);">결과가 잘못되었다면?</span>
+              <a href="/feedback-page" class="btn btn-secondary" style="padding:7px 14px;font-size:13px;">💬 피드백하러 가기</a>
+            </div>
+
+          </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+// ── 상수 ──
+const GRADE = {
+  Danger:  { label:'위험',     color:'#dc2626', bg:'#fef2f2', icon:'🚨' },
+  Warning: { label:'주의',     color:'#f97316', bg:'#fff7ed', icon:'⚠️' },
+  Safe:    { label:'안전',     color:'#16a34a', bg:'#f0fdf4', icon:'✅' },
+  Unknown: { label:'분석 불가', color:'#6b7280', bg:'#f9fafb', icon:'❌' },
+};
+const CAT_NAMES = {
+  PERSONAL:'일반 문자', FINANCE:'금융 사기', DELIVERY:'배송 사기',
+  GOVERNMENT:'공공기관 사칭', PROMOTION:'홍보/투자 유도', AUTH:'계정 탈취', WORK:'지인 사칭',
+};
+const CAT_NAMES_SAFE = {
+  PERSONAL:'일반 문자', FINANCE:'금융 문자', DELIVERY:'배송 문자',
+  GOVERNMENT:'공공기관 문자', PROMOTION:'홍보/투자 문자', AUTH:'계정 문자', WORK:'지인 문자',
+};
+const ACTION_GUIDE = {
+  Danger:  '링크를 절대 클릭하지 마세요. 발신자를 차단하고 KISA 불법스팸대응센터(118)에 신고하세요.',
+  Warning: '링크 대신 공식 앱·웹사이트를 직접 검색해서 확인하세요. 개인정보나 금융정보는 절대 입력하지 마세요.',
+  Safe:    '정상 문자로 판정되었습니다. 그래도 출처가 불분명한 문자라면 발신자 혹은 공식 웹사이트를 직접 확인해보세요.',
+  Unknown: '이미지에서 텍스트 또는 QR 코드를 인식할 수 없습니다. 더 선명한 이미지로 다시 시도해주세요.',
+};
+const KW_LABELS = {
+  urgency:         ['긴박감',   '#dc2626'],
+  threat:          ['위협',     '#ea580c'],
+  action:          ['행동유도', '#f59e0b'],
+  category_pattern:['유형패턴', '#7c3aed'],
+};
+
+// ── 상태 ──
+let currentFile = null;
+let abortCtrl = null;
+let qrScanner = null;
+let qrDetected = false;
+let qrPendingText = null;
+let lastWasQR = false;
+let activeTab = 'tab-image';
+let activeRTab = 'rtab-result';
+
+// ── 탭 전환 ──
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    activeTab = btn.dataset.tab;
+    document.getElementById(activeTab).classList.add('active');
+    if (activeTab !== 'tab-camera') stopCamera();
+  });
+});
+
+document.querySelectorAll('.rtab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.rtab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const id = btn.dataset.rtab;
+    activeRTab = id;
+    document.getElementById('rtab-result').style.display = id === 'rtab-result' ? '' : 'none';
+    document.getElementById('rtab-evidence').style.display = id === 'rtab-evidence' ? '' : 'none';
+  });
+});
+
+// ── 파일 처리 ──
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const previewBox = document.getElementById('previewBox');
+const previewImg = document.getElementById('previewImg');
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragging'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragging'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragging');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) setFile(f);
+});
+
+document.getElementById('previewRemove').addEventListener('click', () => {
+  currentFile = null;
+  previewBox.style.display = 'none';
+  fileInput.value = '';
+  resetResult();
+});
+
+document.getElementById('pasteHint').addEventListener('click', () => {
+  navigator.clipboard.read().then(items => {
+    for (const item of items) {
+      const type = item.types.find(t => t.startsWith('image/'));
+      if (type) { item.getType(type).then(blob => setFile(new File([blob], 'pasted.png', {type}))); break; }
+    }
+  }).catch(() => alert('클립보드 접근 권한이 필요합니다. Ctrl+V를 눌러보세요.'));
+});
+
+document.addEventListener('paste', e => {
+  if (activeTab !== 'tab-image') return;
+  for (const item of e.clipboardData.items) {
+    if (item.type.startsWith('image/')) {
+      const f = item.getAsFile();
+      if (f) { setFile(f); break; }
+    }
+  }
+});
+
+function setFile(file) {
+  currentFile = file;
+  const url = URL.createObjectURL(file);
+  previewImg.src = url;
+  previewBox.style.display = '';
+  resetResult();
+}
+
+// ── 카메라 ──
+document.getElementById('btnCameraToggle').addEventListener('click', () => {
+  const container = document.getElementById('cameraContainer');
+  if (container.style.display === 'none') {
+    container.style.display = '';
+    document.getElementById('btnCameraToggle').textContent = '📷 카메라 끄기';
+    startCamera();
+  } else {
+    stopCamera();
+    container.style.display = 'none';
+    document.getElementById('btnCameraToggle').textContent = '📷 카메라 켜기';
+  }
+});
+
+function startCamera() {
+  if (qrScanner) return;
+  qrDetected = false;
+  qrScanner = new Html5Qrcode('qrReader');
+  qrScanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 220, height: 220 } },
+    qrCode => {
+      if (qrDetected) return;
+      qrDetected = true;
+      // qrScanner를 즉시 null로 해서 재시작 가능하게, 실제 stop/clear는 비동기로
+      const _s = qrScanner;
+      qrScanner = null;
+      if (_s) _s.stop().then(() => _s.clear()).catch(() => {});
+      document.getElementById('cameraContainer').style.display = 'none';
+      document.getElementById('btnCameraToggle').textContent = '📷 카메라 켜기';
+      // 탭 전환 없이 QR 탭에서 바로 분석
+      qrPendingText = qrCode;
+      runAnalysis();
+    }
+  ).catch(err => console.warn('[QR]', err));
+}
+
+function stopCamera() {
+  if (qrScanner) {
+    qrScanner.stop().catch(() => {});
+    qrScanner.clear();
+    qrScanner = null;
+  }
+}
+
+// ── 분석 실행 ──
+document.getElementById('btnAnalyze').addEventListener('click', runAnalysis);
+document.getElementById('btnStop').addEventListener('click', () => {
+  if (abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
+});
+
+async function runAnalysis() {
+  const qrText = qrPendingText;
+  qrPendingText = null;
+  lastWasQR = qrText !== null;
+  const text = qrText !== null ? qrText : document.getElementById('textInput').value.trim();
+  const isTextMode = qrText !== null || activeTab === 'tab-text';
+
+  if (isTextMode && !text) { alert('텍스트를 입력해주세요.'); return; }
+  if (!isTextMode && !currentFile) { alert('이미지를 업로드해주세요.'); return; }
+
+  showLoading();
+  document.getElementById('loadingText').textContent = isTextMode ? '분석 중...' : '이미지 분석 시 처리 시간이 다소 걸릴 수 있습니다';
+  abortCtrl = new AbortController();
+
+  try {
+    let data;
+    if (isTextMode) {
+      const res = await fetch('/analyze-text', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text}),
+        signal: abortCtrl.signal,
+      });
+      if (!res.ok) { let d='서버 오류'; try{d=(await res.json()).detail||d;}catch{} throw new Error(d); }
+      data = await res.json();
+    } else {
+      const form = new FormData();
+      form.append('file', currentFile);
+      const res = await fetch('/analyze', {
+        method: 'POST', body: form, signal: abortCtrl.signal,
+      });
+      if (!res.ok) { let d='서버 오류'; try{d=(await res.json()).detail||d;}catch{} throw new Error(d); }
+      data = await res.json();
+    }
+    renderResult(data);
+  } catch (e) {
+    if (e.name === 'AbortError') { resetResult(); return; }
+    showError(e.message);
+  }
+}
+
+// ── 결과 렌더링 ──
+function renderResult(d) {
+  const gradeKey = d.category?.category === 'UNKNOWN' ? 'Unknown' : (d.result?.grade || 'Safe');
+  const cfg = GRADE[gradeKey] || GRADE.Safe;
+  const nameMap = gradeKey === 'Safe' ? CAT_NAMES_SAFE : CAT_NAMES;
+  const catLabel = gradeKey === 'Unknown' ? '' : (nameMap[d.category?.category] || '');
+  const msg = d.result?.message || '';
+  const keywords = d.nlp_analysis?.risk_keywords || [];
+  const textReasons = d.text_reasons || [];
+  const urlReasons = d.url_reasons || [];
+  const vlm = d.vlm_analysis || {};
+  const gem = d.gemini_text_analysis || {};
+  const pUrl = d.scores?.p_url || 0;
+  const pGemini = d.scores?.p_gemini || 0;
+  const allUrls = [...(d.qr_urls || []), ...(d.text_urls || [])];
+
+  // 등급 카드
+  document.getElementById('gradeCard').innerHTML = `
+    <div class="grade-icon">${cfg.icon}</div>
+    <div class="grade-label">${cfg.label}</div>
+    ${catLabel ? `<div class="grade-cat">${catLabel}</div>` : ''}
+    <div class="grade-msg">${msg}</div>
+  `;
+  document.getElementById('gradeCard').style.background = cfg.color;
+
+  // 낮은 신뢰도 경고 / QR 안내 / URL only 안내
+  const lowConfEl = document.getElementById('lowConfWarn');
+  const isUrlOnly = !d.extracted_text?.trim() && allUrls.length > 0 && !lastWasQR;
+  if (lastWasQR) {
+    lowConfEl.style.display = '';
+    lowConfEl.innerHTML = '📱 QR 분석은 URL 분석 결과를 기반으로 판정됩니다.';
+  } else if (isUrlOnly) {
+    lowConfEl.style.display = '';
+    lowConfEl.innerHTML = '🔗 텍스트가 없어 URL 분석으로 판정되었습니다.';
+  } else if (d.low_confidence_warning) {
+    lowConfEl.style.display = '';
+    lowConfEl.innerHTML = '⚠️ <strong>AI 분석 신호가 미약합니다.</strong> 명확한 위험 패턴이 감지되지 않았습니다. 의심스럽다면 발신 번호를 검색하거나 해당 기관에 직접 문의하세요.';
+  } else {
+    lowConfEl.style.display = 'none';
+  }
+
+  // 행동 가이드
+  const ag = document.getElementById('actionGuide');
+  ag.style.cssText = `background:${cfg.bg};border:1px solid ${cfg.color}44;color:${cfg.color};`;
+  ag.innerHTML = `<strong>행동 가이드</strong><br>${ACTION_GUIDE[gradeKey] || ''}`;
+
+  // KISA 링크
+  document.getElementById('kisaLink').style.display = gradeKey === 'Danger' ? '' : 'none';
+
+  // 공유 텍스트
+  let shareLines = [`[스미싱 탐지 결과]`, `판정: ${cfg.label}${catLabel ? ' (' + catLabel + ')' : ''}`];
+  if (textReasons.length) { shareLines.push('\n[탐지 근거]'); textReasons.forEach(r => shareLines.push('• ' + r)); }
+  if (urlReasons.length) { if (!textReasons.length) shareLines.push('\n[탐지 근거]'); urlReasons.forEach(r => shareLines.push('• ' + r)); }
+  if (gradeKey === 'Danger') shareLines.push('\n의심 문자는 KISA 불법스팸대응센터(118)에 신고하세요.');
+  shareLines.push('\n- 스미싱 탐지 시스템으로 분석됨');
+  document.getElementById('shareText').value = shareLines.join('\n');
+
+  // ── 탐지 근거 탭 ──
+  // AI 종합 분석 카드
+  const sumSentence = buildSummary(gradeKey, gem.success, vlm.success, keywords.length > 0,
+    allUrls.length > 0, pUrl > 2.0, gem.success && pGemini >= 5.0,
+    d.url_analysis?.vt_confirmed_safe || false, gem.success && pGemini >= 3.0);
+  const sumCard = document.getElementById('summaryCard');
+  if (sumSentence) {
+    const sColor = {Danger:'#dc2626', Warning:'#f97316', Safe:'#16a34a'}[gradeKey] || '#64748b';
+    const sIcon  = {Danger:'🚨', Warning:'⚠️', Safe:'✅'}[gradeKey] || '';
+    sumCard.innerHTML = `
+      <div class="summary-card" style="background:${sColor}0d;border-color:${sColor}66;">
+        <div class="summary-title" style="color:${sColor};">${sIcon} AI 종합 분석</div>
+        <div class="summary-text">${sumSentence}</div>
+      </div>`;
+  } else { sumCard.innerHTML = ''; }
+
+  // Gemini 경고
+  const geminiWarnEl = document.getElementById('geminiWarn');
+  if (!lastWasQR && !isUrlOnly && !gem.success && !vlm.success) {
+    geminiWarnEl.style.display = '';
+    geminiWarnEl.innerHTML = '⚠️ AI 문맥 분석을 일시적으로 이용할 수 없어 NLP 및 URL 분석 결과만 반영되었습니다.';
+  } else {
+    geminiWarnEl.style.display = 'none';
+  }
+
+  // Gemini 문맥 카드
+  const gColor = {Danger:'#dc2626', Warning:'#f97316', Safe:'#16a34a'}[gradeKey] || '#64748b';
+  const gemCard = document.getElementById('geminiTextCard');
+  if (gem.success && gem.reason) {
+    gemCard.style.display = '';
+    gemCard.style.borderColor = gColor + '44';
+    gemCard.innerHTML = `
+      <div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">
+        AI 문맥 분석 <span class="gemini-badge">Gemini</span>
+      </div>
+      <div style="font-size:13.5px;color:var(--text-2);">${gem.reason}</div>`;
+  } else { gemCard.style.display = 'none'; }
+
+  // VLM 카드
+  const vlmCard = document.getElementById('vlmCard');
+  if (vlm.success && vlm.visual_signals?.length) {
+    vlmCard.style.display = '';
+    vlmCard.style.borderColor = gColor + '44';
+    const chips = vlm.visual_signals.map(s =>
+      `<span class="keyword-chip" style="background:#7c3aed22;color:#7c3aed;border:1px solid #7c3aed44;">${s}</span>`
+    ).join('');
+    vlmCard.innerHTML = `
+      <div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">
+        AI 시각 분석 <span class="gemini-badge gemini-badge-v">Gemini Vision</span>
+      </div>
+      ${chips}
+      ${vlm.reason ? `<div style="font-size:12px;color:var(--text-3);margin-top:8px;">${vlm.reason}</div>` : ''}`;
+  } else { vlmCard.style.display = 'none'; }
+
+  // 키워드 카드
+  const kwCard = document.getElementById('keywordCard');
+  kwCard.style.display = '';
+  if (keywords.length) {
+    const chips = keywords.map(kw => {
+      const [label, color] = KW_LABELS[kw.type] || [kw.type, '#64748b'];
+      return `<span class="keyword-chip" style="background:${color}22;color:${color};border:1px solid ${color}55;">
+        ${kw.keyword} <span style="opacity:0.7;font-size:10px;">[${label}]</span>
+      </span>`;
+    }).join('');
+    kwCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">탐지된 위험 키워드</div>${chips}`;
+  } else {
+    kwCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:4px;">탐지된 위험 키워드</div><div style="font-size:13px;color:#94a3b8;">감지된 키워드 없음</div>`;
+  }
+
+  // 텍스트 근거
+  const trCard = document.getElementById('textReasonsCard');
+  if (textReasons.length) {
+    trCard.style.display = '';
+    trCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">문자 내용 탐지 근거</div>`
+      + textReasons.map(r => `<div class="reason-item"><span class="reason-dot" style="color:${cfg.color};">•</span><span class="reason-text">${r}</span></div>`).join('');
+  } else { trCard.style.display = 'none'; }
+
+  // URL 근거
+  const urCard = document.getElementById('urlReasonsCard');
+  if (urlReasons.length) {
+    urCard.style.display = '';
+    urCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">URL 탐지 근거</div>`
+      + urlReasons.map(r => `<div class="reason-item"><span class="reason-dot" style="color:${cfg.color};">•</span><span class="reason-text">${r}</span></div>`).join('');
+  } else { urCard.style.display = 'none'; }
+
+  showResult();
+}
+
+// ── 종합 분석 문장 (Python _build_summary 포팅) ──
+function buildSummary(grade, g, v, k, u, ur, geminiHigh, vtSafe, gNoted) {
+  if (grade === 'Danger') {
+    if (g && v && ur) return 'AI 문맥·시각 분석에서 스미싱 패턴이 감지되었고, URL이 악성으로 확인되어 위험으로 판정되었습니다.';
+    if (g && ur)       return 'AI 문맥 분석에서 스미싱 패턴이 감지되었고, URL이 악성으로 확인되어 위험으로 판정되었습니다.';
+    if (v && ur)       return '이미지에서 시각적 위협 신호가 감지되었고, URL이 악성으로 확인되어 위험으로 판정되었습니다.';
+    if (ur)            return 'URL 보안 분석에서 악성으로 확인되어 위험으로 판정되었습니다.';
+    if (g && v)        return 'AI 문맥·시각 분석에서 스미싱 패턴이 감지되어 위험으로 판정되었습니다.';
+    if (g)             return 'AI 문맥 분석에서 스미싱 패턴이 강하게 감지되어 위험으로 판정되었습니다.';
+    return '복합적인 위험 신호가 감지되어 위험으로 판정되었습니다.';
+  }
+  if (grade === 'Warning') {
+    if (g && v && ur) return 'AI 문맥·시각 분석에서 의심 요소가 발견되었고, URL에서도 위험 신호가 감지되어 주의로 판정되었습니다.';
+    if (g && ur)      return 'AI 문맥 분석에서 의심 요소가 발견되었고, URL에서 일부 위험 신호가 감지되어 주의로 판정되었습니다.';
+    if (g && k)       return 'AI 문맥 분석과 키워드 패턴에서 의심 요소가 발견되어 주의로 판정되었습니다.';
+    if (g)            return 'AI 문맥 분석에서 일부 의심 요소가 발견되어 주의로 판정되었습니다.';
+    if (k && ur)      return '스미싱 패턴 키워드가 탐지되었고, URL에서도 의심 신호가 발견되어 주의로 판정되었습니다.';
+    if (ur)           return 'URL 분석에서 일부 위험 신호가 감지되어 주의로 판정되었습니다.';
+    if (k)            return '스미싱에서 자주 사용되는 키워드 패턴이 감지되어 주의로 판정되었습니다.';
+    return '복합적인 의심 신호가 감지되어 주의로 판정되었습니다.';
+  }
+  if (grade === 'Safe') {
+    if (geminiHigh && vtSafe) return 'AI 문맥 분석에서 일부 의심 요소가 감지되었으나, 다수의 보안 엔진에서 URL을 안전한 사이트로 확인하여 최종 안전으로 판정되었습니다.';
+    if (geminiHigh && u)      return 'AI 문맥 분석에서 의심 요소가 감지되었으나, URL이 알려진 위험 사이트가 아닌 것으로 확인되어 최종 안전으로 판정되었습니다.';
+    if (gNoted && k && ur)    return '키워드와 URL에서 일부 의심 요소가 발견되었으나, URL이 알려진 위험 사이트가 아닌 것으로 확인되어 안전으로 판정되었습니다.';
+    if (gNoted && k)          return '일부 키워드가 탐지되었으나, 핵심 위험 패턴이 발견되지 않아 안전으로 판정되었습니다.';
+    if (g && u)               return 'AI 문맥 분석과 URL 분석에서 위험 요소가 발견되지 않아 안전으로 판정되었습니다.';
+    if (g)                    return 'AI 문맥 분석에서 위험 요소가 발견되지 않아 안전으로 판정되었습니다.';
+    if (k && !ur)             return '일부 키워드가 탐지되었으나, URL이 알려진 위험 사이트가 아니고 스미싱 핵심 패턴이 발견되지 않아 안전으로 판정되었습니다.';
+    return '위험 패턴 및 악성 URL이 감지되지 않아 안전으로 판정되었습니다.';
+  }
+  return '';
+}
+
+// ── UI 상태 전환 ──
+function showLoading() {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('loadingState').style.display = '';
+  document.getElementById('resultArea').style.display = 'none';
+}
+function showResult() {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('resultArea').style.display = '';
+}
+function resetResult() {
+  document.getElementById('emptyState').style.display = '';
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('resultArea').style.display = 'none';
+}
+function showError(msg) {
+  document.getElementById('emptyState').style.display = '';
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('resultArea').style.display = 'none';
+  document.getElementById('emptyState').innerHTML = `
+    <div class="empty-state-icon">⚠️</div>
+    <p style="color:var(--danger);font-weight:600;">분석 오류</p>
+    <p>${msg}</p>
+    <button class="btn btn-secondary" style="margin-top:0.8rem;" onclick="resetResult();this.parentElement.innerHTML='<div class=\\'empty-state-icon\\'>🛡️</div><p>이미지 또는 텍스트를 입력하고<br>분석 버튼을 눌러주세요.</p>'">다시 시도</button>
+  `;
+}
+
+// ── 복사 버튼 ──
+document.getElementById('btnCopy').addEventListener('click', () => {
+  const t = document.getElementById('shareText').value;
+  navigator.clipboard.writeText(t).then(() => {
+    const btn = document.getElementById('btnCopy');
+    btn.textContent = '✅ 복사됨!';
+    setTimeout(() => { btn.textContent = '📋 복사'; }, 1500);
+  });
+});
+</script>
+</body>
+</html>

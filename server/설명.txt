@@ -1,0 +1,29 @@
+1) 서버 테스트
+server/
+├── main.py
+├── predictor.py
+├── smishing_best_model.pt
+└── url_analyzer.py
+
+하나의 폴더 안에 4개의 파일이 들어있어야 함
+smishing_best_model.pt는 용량이 커서 안 올라감 어차피 카테고리 줄이고 정확도 올라간 모델 완성되면 그걸로 교체해야 됨 + 현재 py 코드는 카테고리 11개 기준의 코드이기 때문에 모델 교체하면 카테고리 관련 코드 조금 수정해야 됨
+
+터미널에
+1. cd server
+2. py -3.12 -m uvicorn main:app --reload (본인에게 맞는 코드로 reload)
+3. 서버 실행되면 사진 넣고 돌리기
+
+- 외부 db 바꾸는 게 좋을지 테스트 할 예정
+
+
+2) UI 테스트
+frontend/
+└── app.py
+
+실행
+1. 터미널1에 cd server
+2. py -3.12 -m uvicorn main:app --reload (본인에게 맞는 코드로 reload)
+3. 터미널2에 cd frontend
+4. py -3.12 -m streamlit run app.py (본인에게 맞는 코드로 실행)
+
+- 텍스트 복붙해서 검사하는 기능 추가 예정
