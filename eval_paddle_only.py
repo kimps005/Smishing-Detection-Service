@@ -73,7 +73,7 @@ def _reorder_url_blocks(lines):
     if len(lines) < 2:
         return lines
     # 앞에서 URL만 있는 연속 블록 추출
-    url_front, rest = [], []
+    url_front = []
     i = 0
     while i < len(lines) and _URL_START.search(lines[i][1]):
         url_front.append(lines[i])

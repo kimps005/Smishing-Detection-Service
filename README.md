@@ -1,73 +1,66 @@
-# 지능형 스미싱/큐싱 탐지 솔루션
+# CatchSmishing
 
-> 멀티모달 AI 기반 스미싱·큐싱 탐지 시스템 — 문자 캡처 이미지 또는 텍스트를 분석해 위험도를 판정합니다.
+> 이미지, 텍스트, QR 코드를 기반으로 스미싱 여부를 분석하고 위험도를 판정하는 AI 기반 스미싱 탐지 서비스입니다.
 
-🌐 웹: [catchsmishing.com](https://catchsmishing.com)  
-⚙️ API: [api.catchsmishing.com](https://api.catchsmishing.com)
+- 서비스 주소: [catchsmishing.com](https://catchsmishing.com)
+- API 주소: [api.catchsmishing.com](https://api.catchsmishing.com)
 
 ---
 
-## 시스템 아키텍처
+## 1. 프로젝트 소개
 
-```
+CatchSmishing은 사용자가 수신한 문자 메시지를 텍스트, 캡처 이미지, QR 코드 등 다양한 형태로 입력하면 AI 기반 복합 분석을 통해 스미싱 위험도를 판단해주는 서비스입니다.
+
+단순 키워드 탐지가 아니라 다음 요소를 함께 반영합니다.
+
+- OCR 기반 텍스트 추출
+- 문자 카테고리 분류
+- 위험 키워드 및 행동 유도 패턴 분석
+- URL 보안 분석
+- Gemini 기반 문맥 분석
+- Gemini Vision 기반 시각 분석
+
+---
+
+## 2. 시스템 흐름
+
+```text
 [입력: 이미지 / 텍스트 / QR]
         ↓
-  ① OCR (PaddleOCR) — 이미지에서 텍스트 및 QR URL 추출
+OCR(PaddleOCR)로 이미지 내 텍스트 및 QR URL 추출
         ↓
-  ② 카테고리 분류 (KLUE/bert-base)
-     + 텍스트 위험 패턴 분석 → P_NLP 산출
-  ③ URL 보안 분석 (피싱 피드, VirusTotal 등) → P_URL 산출
-  ④ Gemini Vision — 이미지 시각 위협 신호 분석 → P_VLM 산출
-  ⑤ Gemini Text — 문자 맥락 스미싱 판단 → P_Gemini 산출
+문자 카테고리 분류(KLUE/bert-base fine-tuned)
         ↓
-  ⑥ 최종 위험도 S 산출 (calculate_final_score_v2)
+텍스트 위험 신호 분석(P_NLP)
         ↓
-[출력: 등급 + 카테고리 + 탐지 근거 + 행동 가이드]
+URL 보안 분석(P_URL)
+ - 단축 URL 추적
+ - 악성 피드 대조
+ - VirusTotal 조회
+ - WHOIS 생성일 확인
+ - APK 설치 유도 여부 확인
+        ↓
+Gemini 문맥 분석(P_Gemini)
+Gemini Vision 시각 분석(P_VLM)
+        ↓
+최종 위험 점수 계산
+        ↓
+[출력: 등급 + 카테고리 + 탐지 근거 + 대응 가이드]
 ```
 
 ---
 
-## 위험도 등급
+## 3. 위험 등급
 
 | 등급 | 점수 범위 |
-|------|---------|
-| 위험 (Danger) | 7.0 ~ 10.0 |
-| 주의 (Warning) | 3.5 ~ 6.9 |
-| 안전 (Safe) | 0.0 ~ 3.4 |
+|------|----------|
+| Danger | 7.0 ~ 10.0 |
+| Warning | 3.5 ~ 6.9 |
+| Safe | 0.0 ~ 3.4 |
 
 ---
 
-## 최종 위험도 공식
-
-입력 유형(이미지/텍스트/QR), URL 분석 결과, Gemini 분석 결과, 시각 분석 결과에 따라 가중치가 자동 결정됩니다.
-
-**우선순위: URL > P_Gemini > P_VLM > P_NLP**
-
-### 점수 구성
-
-| 점수 | 설명 |
-|------|------|
-| P_NLP | 카테고리 분류 결과와 긴급성·위협·행동 유도·카테고리별 위험 키워드를 기반으로 산출한 텍스트 위험 점수 |
-| P_URL | 피싱 피드, VirusTotal, URL 특징, WHOIS, APK 다운로드 유도 여부를 종합한 URL 위험 점수 |
-| P_Gemini | Gemini가 문자 맥락을 분석해 산출한 스미싱 의심 점수 |
-| P_VLM | Gemini Vision이 이미지 레이아웃, 로고, QR, 경고 UI 등 시각적 위협 신호를 분석한 점수 |
-
-### 대표 가중치
-
-| 상황 | 공식 |
-|------|------|
-| 강한 URL 위험 신호 + Gemini + VLM | `P_URL×0.75 + P_Gemini×0.15 + P_VLM×0.05 + P_NLP×0.05` |
-| 중간 URL 위험 신호 + Gemini + VLM | `P_URL×0.45 + P_Gemini×0.30 + P_VLM×0.15 + P_NLP×0.10` |
-| URL 안전 확인 + Gemini + VLM | `P_Gemini×0.45 + P_VLM×0.15 + P_NLP×0.20 + P_URL×0.20` |
-| URL 없음 + Gemini + VLM | `P_Gemini×0.50 + P_VLM×0.30 + P_NLP×0.20` |
-| URL 없음 + Gemini만 | `P_Gemini×0.70 + P_NLP×0.30` |
-| URL 없음, 신호 없음 | `P_NLP×1.0` |
-
-VirusTotal에서 악성 또는 의심 탐지가 있고 Gemini도 의심 판단을 내린 경우, 최종 등급이 위험(Danger)으로 보정될 수 있습니다.
-
----
-
-## 분류 카테고리 (7종)
+## 4. 주요 카테고리
 
 | 카테고리 | 설명 |
 |----------|------|
@@ -76,88 +69,139 @@ VirusTotal에서 악성 또는 의심 탐지가 있고 Gemini도 의심 판단�
 | DELIVERY | 배송 사기 |
 | GOVERNMENT | 공공기관 사칭 |
 | PROMOTION | 홍보/투자 유도 |
-| AUTH | 계정 탈취 |
-| WORK | 지인 사칭 |
+| AUTH | 계정 인증/탈취 |
+| WORK | 업무/지인 사칭 |
 
 ---
 
-## 기술 스택
+## 5. 주요 기능
 
-### 서버
-- **Framework:** FastAPI
-- **OCR:** PaddleOCR (한국어/영어)
-- **카테고리 분류:** KLUE/bert-base fine-tuned 모델
-- **텍스트 위험 분석:** 긴급성, 위협 표현, 행동 유도, 카테고리별 위험 키워드 기반 점수화
-- **멀티모달 분석:** Google Gemini API (이미지 시각 분석 + 텍스트 문맥 분석)
-- **URL 분석:** 피싱 피드 DB, VirusTotal, 도메인 나이/리다이렉트 추적
-- **DB:** MySQL (Aiven 클라우드) — URL 탐지 이력, 피드백 저장
-- **배포:** Cloudflare Tunnel
-
-### 앱
-- **Framework:** Flutter (Android)
-- **언어:** Dart
-- **주요 패키지:** image_picker, http, share_handler, mobile_scanner, share_plus
-
-### 웹 UI
-- **Framework:** Streamlit
+- 이미지 분석: 문자 캡처 이미지 업로드 후 OCR, QR, 문맥, 시각 분석 수행
+- 텍스트 분석: 문자 내용을 직접 입력하거나 공유해 분석 수행
+- QR 분석: 카메라로 QR 코드를 읽고 연결 URL 위험도 판정
+- URL 보안 분석: 악성 피드, VirusTotal, WHOIS, APK 유도 여부 종합 점검
+- 탐지 근거 제공: 위험 키워드, URL 근거, AI 분석 이유 제공
+- 위험 URL 랭킹: 반복 탐지된 위험 URL 상위 목록 제공
+- 피드백 수집: 오탐/미탐 사례 제출 및 개선 데이터 확보
+- 관리자 로그 조회: 분석 이력과 점수 정보를 웹에서 확인 가능
 
 ---
 
-## 주요 기능
+## 6. 기술 스택
 
-- **이미지 분석:** 문자 캡처 이미지 업로드 → OCR + QR 추출 → AI 멀티모달 위험도 판정
-- **텍스트 분석:** 문자 내용 직접 입력 또는 공유하기 연동
-- **QR 스캔:** 웹 카메라 / 앱 카메라로 QR 코드 스캔 후 분석
-- **Gemini 시각 분석:** 이미지 레이아웃·색상·로고 등 시각적 위협 신호 탐지
-- **Gemini 문맥 분석:** 문자 내용의 스미싱 맥락 판단
-- **탐지 순위:** 위험 URL 누적 탐지 횟수 Top 50 + 카테고리 분포 차트
-- **오탐 피드백:** 잘못된 판정 신고 (텍스트/이미지 첨부)
-- **행동 가이드:** 등급별 대응 방법 안내
+### Backend / AI
+
+- FastAPI
+- Uvicorn
+- PaddleOCR
+- PyTorch
+- Hugging Face Transformers
+- Google Gemini API
+- OpenCV
+- pyzbar
+- requests
+- python-whois
+- PyMySQL
+
+### Mobile App
+
+- Flutter
+- Dart
+- `image_picker`
+- `http`
+- `share_handler`
+- `mobile_scanner`
+- `share_plus`
+
+### Admin / Operation
+
+- Streamlit
+- MySQL (Aiven Cloud)
 
 ---
 
-## 실행 방법
+## 7. 실행 방법
 
-### 환경 설정
+### Python 환경
 
-**가상환경 사용 시 (Windows)**
 ```bash
-cd Smishing_Project
+cd Project
 venv\Scripts\activate
 ```
 
-**패키지 설치**
+### 패키지 설치
+
 ```bash
-pip install fastapi uvicorn paddleocr pymysql transformers huggingface_hub sentencepiece google-genai pillow
+pip install fastapi uvicorn paddleocr pymysql transformers huggingface_hub sentencepiece google-genai pillow numpy opencv-python pyzbar requests python-whois streamlit torch
 ```
 
-### 서버
+### API 서버 실행
+
 ```bash
 cd server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 웹 UI
+### Streamlit 운영 UI 실행
+
 ```bash
 cd server
 streamlit run app.py
 ```
 
-### 앱
+### Flutter 앱 실행
+
 ```bash
-cd smishing_app
 flutter run
 ```
 
-> **주의:** `server/sms_category_model.pt`는 git에 포함되지 않습니다. 별도로 복사해주세요.
+> 참고: `server/sms_category_model.pt` 파일은 별도 배포 또는 복사가 필요할 수 있습니다.
 
 ---
 
-## API 주요 엔드포인트
+## 8. 주요 API
 
 | 메서드 | URL | 설명 |
 |--------|-----|------|
-| POST | `/analyze` | 이미지 분석 (multipart/form-data) |
-| POST | `/analyze-text` | 텍스트 분석 (JSON) |
-| GET | `/top-urls?limit=50` | 위험 URL 탐지 순위 |
-| POST | `/feedback` | 오탐 피드백 제출 |
+| POST | `/analyze` | 이미지 분석 |
+| POST | `/analyze-text` | 텍스트 분석 |
+| GET | `/top-urls?limit=50` | 위험 URL 랭킹 조회 |
+| POST | `/feedback` | 사용자 피드백 제출 |
+| GET | `/admin/logs` | 관리자 분석 로그 조회 |
+
+---
+
+## 9. 라이브러리 버전
+
+아래 버전은 2026-06-03 기준 로컬 개발 환경에서 `pip show`로 확인한 값입니다.
+
+| 라이브러리 | 버전 | 용도 |
+|-----------|------|------|
+| FastAPI | 0.135.1 | API 서버 |
+| Uvicorn | 0.42.0 | ASGI 서버 |
+| PaddleOCR | 2.7.3 | OCR 텍스트 추출 |
+| PyMySQL | 1.1.3 | MySQL 연동 |
+| transformers | 5.3.0 | BERT 기반 분류 모델 |
+| huggingface_hub | 1.7.2 | 모델 다운로드 |
+| google-genai | 2.4.0 | Gemini 연동 |
+| Pillow | 11.0.0 | 이미지 처리 |
+| numpy | 1.26.4 | 수치 연산 |
+| opencv-python | 4.6.0.66 | 이미지 전처리 |
+| pyzbar | 0.1.9 | QR 코드 추출 |
+| requests | 2.32.4 | 외부 보안 API 호출 |
+| python-whois | 0.9.6 | 도메인 생성일 조회 |
+| streamlit | 1.50.0 | 운영 UI |
+| torch | 2.5.1+cu121 | 분류 모델 추론 |
+
+### 참고 사항
+
+- `sentencepiece`는 현재 로컬 환경에서 설치 여부가 확인되지 않았습니다.
+- Flutter 패키지의 정확한 버전 관리는 `pubspec.yaml` 기준으로 추가 정리하는 것을 권장합니다.
+
+---
+
+## 10. 현재 서비스 구조 메모
+
+- 현재 버전은 사용자 로그인 없이 즉시 분석 가능한 비회원형 구조입니다.
+- 관리자 분석 로그는 `/admin/logs` 페이지를 통해 조회할 수 있습니다.
+- 향후 사용자 로그인, 개인 분석 이력 저장, 관리자 권한 분리 기능으로 확장 가능합니다.

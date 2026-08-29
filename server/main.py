@@ -1,6 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 from typing import Optional
 import os
 import tempfile
@@ -15,11 +14,10 @@ from urllib.parse import urlparse
 from google import genai as google_genai
 import PIL.Image
 
-from predictor import predict, DANGEROUS_CATEGORIES
+from predictor import predict
 import url_analyzer
 from url_analyzer import analyze_urls, resolve_url, check_threat_feeds, check_virustotal
 from collections import Counter
-import pymysql
 import requests
 from db_config import get_db_conn
 import zipfile
@@ -486,31 +484,6 @@ def _gemini_generate(contents: list, retries: int = 2) -> str | None:
 
 async def _gemini_generate_async(contents: list, retries: int = 2) -> str | None:
     return await asyncio.to_thread(_gemini_generate, contents, retries)
-
-
-async def analyze_image_vlm(img_bytes: bytes) -> dict:
-    import json as _json, re as _re
-    result = {"vlm_smishing_score": 0.0, "visual_signals": [], "reason": "", "success": False}
-    try:
-        image = PIL.Image.open(io.BytesIO(img_bytes))
-        text = await _gemini_generate_async([
-            image,
-            "이 이미지는 스미싱/큐싱 탐지를 위한 휴대폰 문자 또는 QR코드 스크린샷입니다.\n"
-            "시각적 위협 신호를 분석해 아래 JSON만 반환하세요 (설명 없이):\n"
-            '{"vlm_smishing_score": 0.0~1.0, "visual_signals": ["신호1", "신호2"], "reason": "한 줄 요약"}\n\n'
-            "시각적 위협 신호 예시: 긴박감 조성 색상(빨강/경고), 공공기관·은행 사칭 로고, 의심 QR코드, 링크·버튼 클릭 유도 레이아웃"
-        ])
-        if text:
-            m = _re.search(r'\{.*\}', text, _re.DOTALL)
-            if m:
-                data = _json.loads(m.group())
-                result["vlm_smishing_score"] = round(float(data.get("vlm_smishing_score", 0.0)), 4)
-                result["visual_signals"] = data.get("visual_signals", [])
-                result["reason"] = data.get("reason", "")
-                result["success"] = True
-    except Exception as e:
-        print(f"[VLM] 분석 실패: {e}")
-    return result
 
 
 def _build_url_context(analyzed_urls: list) -> str:
@@ -1020,8 +993,6 @@ def analyze_full(text: str, urls: list) -> dict:
     url_result = analyze_urls(urls, category, text)
     p_url = url_result["p_url"]
     p_url_raw = url_result.get("p_url_raw", p_url)
-    vt_confirmed_safe = url_result.get("vt_confirmed_safe", False)
-
     # text_reasons 생성 (risk_keywords 타입 기반)
     TYPE_TO_REASON = {
         'urgency':          '긴박감을 조성하는 표현을 포함하고 있습니다',

@@ -20,7 +20,7 @@ import re
 import requests
 from urllib.parse import urlparse
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 import whois  # pip install python-whois
 
 # 피드 인메모리 set (main.py가 서버 시작 및 6시간마다 갱신)

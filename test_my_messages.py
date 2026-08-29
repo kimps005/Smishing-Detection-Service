@@ -16,14 +16,6 @@ DELAY = 5.0  # Gemini free tier 15 RPM 제한 대응
 SAMPLE_SIZE = None  # None이면 전체, 숫자 입력 시 앞에서 N개만
 
 
-def fix_encoding(text: str) -> str:
-    """Latin-1로 잘못 읽힌 UTF-8 텍스트 복원"""
-    try:
-        return text.encode("latin-1").decode("utf-8")
-    except Exception:
-        return text
-
-
 def parse_messages(filepath: str) -> list[str]:
     with open(filepath, "rb") as f:
         raw = f.read().decode("utf-8", errors="replace")
@@ -54,8 +46,6 @@ def run_test():
     print(f"→ {total}개 테스트 시작 (예상 소요: {total * DELAY / 60:.1f}분)\n")
 
     results = {"Danger": [], "Warning": [], "Safe": [], "Unknown": [], "Error": []}
-    log_lines = []
-
     for i, text in enumerate(sample, 1):
         try:
             resp = requests.post(API_URL, json={"text": text}, timeout=60)
@@ -71,7 +61,6 @@ def run_test():
             line = f"[{i:3}/{total}] ERROR: {e}"
 
         print(line)
-        log_lines.append(line)
 
         # 진행 상황 즉시 파일에 추가 (중간에 꺼져도 기록 남음)
         with open("test_my_messages_result.txt", "a", encoding="utf-8") as f:
