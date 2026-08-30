@@ -16,12 +16,16 @@ P_URL 점수 산출 모듈
 출력: 0~10점 (P_URL)
 """
 
+import os
 import re
 import requests
+from dotenv import load_dotenv
 from urllib.parse import urlparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import whois  # pip install python-whois
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # 피드 인메모리 set (main.py가 서버 시작 및 6시간마다 갱신)
 phishingdb_urls: set = set()
@@ -32,7 +36,7 @@ urlhaus_domains: set = set()
 # 설정 (Constants)
 # =============================================================
 
-VIRUSTOTAL_API_KEY = "47a96424ec494365413470dfe76aad4a2bc88dbfd30202803949799d91b95481"
+VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
 
 SUSPICIOUS_KEYWORDS = [
     'login', 'secure', 'account', 'update', 'verify',
@@ -290,6 +294,9 @@ def check_virustotal(domain):
     }
 
     if not domain:
+        return result
+
+    if not VIRUSTOTAL_API_KEY:
         return result
 
     is_ip = bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', domain))

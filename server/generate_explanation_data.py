@@ -7,13 +7,17 @@ Gemini 교사 모델로 설명 포함 파인튜닝 데이터 생성
 
 from google import genai
 from datasets import load_dataset
+from dotenv import load_dotenv
 import json
 import random
 import time
 import re
 import os
 
-API_KEY = "AIzaSyCa2GnI1dhBrVQTBRdKaF02XcDVWJoxiKs"
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(PROJECT_DIR, ".env"))
+
+API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 OUTPUT_FILE = "exaone_finetune_with_explanation.jsonl"
 NORMAL_FILES = [
     r"C:\Users\asd\Downloads\normal_messages_mine.jsonl",
@@ -127,6 +131,11 @@ def is_daily_limit(err_str):
 
 
 def main():
+    if not API_KEY:
+        raise RuntimeError(
+            "GEMINI_API_KEY가 설정되지 않았습니다. 프로젝트 루트의 .env에 추가하세요."
+        )
+
     client = genai.Client(api_key=API_KEY)
     model_idx = 0
     current_model = MODELS[model_idx]

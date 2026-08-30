@@ -4,7 +4,13 @@ from typing import Optional
 import os
 import tempfile
 import traceback
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 os.environ['FLAGS_enable_pir_api'] = '0'
+# PaddlePaddle can preload DLLs that conflict with PyTorch on Windows.
+# Load the PyTorch-based predictor first so the API process starts reliably.
+from predictor import predict
 from paddleocr import PaddleOCR
 import numpy as np
 import cv2
@@ -14,7 +20,6 @@ from urllib.parse import urlparse
 from google import genai as google_genai
 import PIL.Image
 
-from predictor import predict
 import url_analyzer
 from url_analyzer import analyze_urls, resolve_url, check_threat_feeds, check_virustotal
 from collections import Counter
@@ -452,12 +457,14 @@ _MAX_SCORE = 12
 # Gemini Vision (VLM 시각 분석)
 # =============================================================
 
-GEMINI_API_KEY = "AIzaSyCSJgF1kz_O7jiQjnqwaxQuY4OtzGGRn2g"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 _gemini_client = None
 
 
 def _get_gemini():
     global _gemini_client
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
     if _gemini_client is None:
         _gemini_client = google_genai.Client(api_key=GEMINI_API_KEY)
     return _gemini_client

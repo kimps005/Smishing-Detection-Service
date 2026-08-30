@@ -2,7 +2,7 @@
 1. vscode 터미널에서 cloudflared 설치
 winget install Cloudflare.cloudflared
 2. cmd 관리자 권한으로 실행한 뒤 설치
-cloudflared.exe service install eyJhIjoiNDVmZTc0YTUxZTgyYzdjYjI0ODIzZjdkZjA1ZjFiNjYiLCJ0IjoiZDgzNzYzYjctOGI4Yy00NWI3LWFmYTgtYWVmZGFmNDFhZDhmIiwicyI6Ik9UQmlaVGN6WmpNdFpEazJPUzAwWVdabExUZzRNV1l0T1RsallUWm1OMlV5T1RrMyJ9
+cloudflared.exe service install <CLOUDFLARE_TUNNEL_TOKEN>
 
 
 실행 순서

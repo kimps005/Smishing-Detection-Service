@@ -132,7 +132,7 @@ venv\Scripts\activate
 ### 패키지 설치
 
 ```bash
-pip install fastapi uvicorn paddleocr pymysql transformers huggingface_hub sentencepiece google-genai pillow numpy opencv-python pyzbar requests python-whois streamlit torch
+pip install fastapi uvicorn paddleocr pymysql transformers huggingface_hub sentencepiece google-genai pillow numpy opencv-python pyzbar requests python-whois streamlit torch python-dotenv
 ```
 
 ### API 서버 실행
