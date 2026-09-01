@@ -124,9 +124,9 @@ async def limit_expensive_requests(request: Request, call_next):
 _analysis_cancellations: dict[str, tuple[threading.Event, float]] = {}
 _analysis_cancel_lock = threading.Lock()
 try:
-    _ANALYSIS_WORKERS = max(1, min(int(os.getenv("ANALYSIS_WORKERS", "2")), 4))
+    _ANALYSIS_WORKERS = max(1, min(int(os.getenv("ANALYSIS_WORKERS", "4")), 4))
 except ValueError:
-    _ANALYSIS_WORKERS = 2
+    _ANALYSIS_WORKERS = 4
 _analysis_executor = ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS, thread_name_prefix="analysis")
 
 
