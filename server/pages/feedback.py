@@ -1,10 +1,12 @@
 import streamlit as st
 import requests
-import re
 import html
+import os
 from collections import defaultdict
+from dotenv import load_dotenv
 
-API_URL = "http://127.0.0.1:8000"
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 
 CATEGORY_NAMES = {
     "PERSONAL":   "일반 문자",

@@ -39,6 +39,10 @@ urlhaus_domains: set = set()
 # =============================================================
 
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
+try:
+    MAX_URLS_PER_ANALYSIS = max(1, int(os.getenv("MAX_URLS_PER_ANALYSIS", "10")))
+except ValueError:
+    MAX_URLS_PER_ANALYSIS = 10
 
 SUSPICIOUS_KEYWORDS = [
     'login', 'secure', 'account', 'update', 'verify',
@@ -84,12 +88,12 @@ def extract_domain(url):
     try:
         if not url.startswith(('http://', 'https://')):
             url = 'http://' + url
-        netloc = urlparse(url).netloc.lower()
-        if netloc.startswith('www.'):
-            netloc = netloc[4:]
-        elif netloc.startswith('m.'):
-            netloc = netloc[2:]
-        return netloc
+        hostname = (urlparse(url).hostname or '').lower().rstrip('.')
+        if hostname.startswith('www.'):
+            hostname = hostname[4:]
+        elif hostname.startswith('m.'):
+            hostname = hostname[2:]
+        return hostname
     except Exception:
         return ""
 
@@ -237,10 +241,10 @@ def resolve_url(url, timeout=5):
         result['error'] = "도메인에 연결할 수 없습니다"
     except requests.exceptions.Timeout:
         result['error'] = "연결 시간 초과"
-    except requests.exceptions.RequestException as e:
-        result['error'] = f"URL 접속 실패: {str(e)[:50]}"
-    except Exception as e:
-        result['error'] = f"알 수 없는 오류: {str(e)[:50]}"
+    except requests.exceptions.RequestException:
+        result['error'] = "URL 접속에 실패했습니다"
+    except Exception:
+        result['error'] = "URL 확인 중 오류가 발생했습니다"
 
     return result
 
@@ -361,7 +365,10 @@ def check_virustotal(domain):
     """
     result = {
         'is_malicious': False,
+        'is_suspicious': False,
         'positive_count': 0,
+        'malicious_count': 0,
+        'suspicious_count': 0,
         'total_count': 0,
         'harmless_count': 0,
         'score': 0.0,
@@ -403,9 +410,12 @@ def check_virustotal(domain):
         total = malicious + suspicious + harmless + stats.get('undetected', 0)
 
         result['positive_count'] = positive
+        result['malicious_count'] = malicious
+        result['suspicious_count'] = suspicious
         result['total_count'] = total
         result['harmless_count'] = harmless
-        result['is_malicious'] = positive > 0
+        result['is_malicious'] = malicious > 0
+        result['is_suspicious'] = suspicious > 0
 
         # 점수 산정 (탐지 비율 기반)
         if total > 0:
@@ -543,6 +553,28 @@ def _strip_query(url: str) -> str:
         return url
 
 
+def _canonical_feed_url(url: str) -> str:
+    """피드 비교용 URL 정규화 (스킴·호스트 대소문자와 기본 포트 통일)"""
+    try:
+        parsed = urlparse(url.strip())
+        hostname = (parsed.hostname or '').lower().rstrip('.')
+        if not hostname:
+            return url.strip().lower()
+        if ':' in hostname and not hostname.startswith('['):
+            hostname = f'[{hostname}]'
+        port = parsed.port
+        netloc = hostname
+        if port and not ((parsed.scheme.lower() == 'http' and port == 80)
+                         or (parsed.scheme.lower() == 'https' and port == 443)):
+            netloc = f'{netloc}:{port}'
+        return parsed._replace(
+            scheme=parsed.scheme.lower(),
+            netloc=netloc,
+        ).geturl()
+    except Exception:
+        return url.strip().lower()
+
+
 def check_threat_feeds(url: str, final_url: str, final_domain: str) -> dict:
     """
     OpenPhish / URLhaus 피드에 URL 또는 도메인이 등재됐는지 조회 (인메모리 set 기반)
@@ -558,7 +590,9 @@ def check_threat_feeds(url: str, final_url: str, final_domain: str) -> dict:
 
     # 쿼리 파라미터 제거 URL 추가 (단축 URL은 경로 자체가 식별자라 변화 없음)
     stripped = {_strip_query(u) for u in urls_to_check} - {''}
-    urls_to_check_extended = urls_to_check | stripped
+    canonical = {_canonical_feed_url(u) for u in urls_to_check} - {''}
+    canonical_stripped = {_strip_query(u) for u in canonical} - {''}
+    urls_to_check_extended = urls_to_check | stripped | canonical | canonical_stripped
 
     # Phishing.Database: exact + 쿼리 제거 URL 매칭
     for u in urls_to_check_extended:
@@ -630,7 +664,17 @@ def calculate_p_url(url):
         try:
             virustotal = vt_future.result(timeout=12)
         except Exception:
-            virustotal = {'is_malicious': False, 'positive_count': 0, 'total_count': 0, 'harmless_count': 0, 'score': 0.0, 'domain': final_domain}
+            virustotal = {
+                'is_malicious': False,
+                'is_suspicious': False,
+                'positive_count': 0,
+                'malicious_count': 0,
+                'suspicious_count': 0,
+                'total_count': 0,
+                'harmless_count': 0,
+                'score': 0.0,
+                'domain': final_domain,
+            }
         try:
             whois_result = whois_future.result(timeout=8)
         except Exception:
@@ -679,10 +723,10 @@ def calculate_p_url(url):
     danger_reasons = []
     if feed_result['is_feed_hit']:
         danger_reasons.append("피싱 데이터베이스에 등재된 URL입니다")
-    if virustotal['is_malicious']:
-        malicious = virustotal['positive_count']
-        danger_reasons.append("보안 엔진에서 악성 URL로 판정되었습니다" if malicious > 0
-                              else "보안 엔진에서 의심 URL로 판정되었습니다")
+    if virustotal.get('is_malicious'):
+        danger_reasons.append("보안 엔진에서 악성 URL로 판정되었습니다")
+    elif virustotal.get('is_suspicious'):
+        danger_reasons.append("보안 엔진에서 의심 URL로 판정되었습니다")
     if apk_result['is_apk']:
         danger_reasons.append("공식 스마트스토어가 아닌 APK 파일로 설치 유도하는 링크입니다")
     if resolved['is_shortener'] and not vt_confirmed_safe:
@@ -780,6 +824,9 @@ def analyze_urls(urls, category=None, text=None):
             seen.add(normalized)
             unique_urls.append(url)
     
+    original_url_count = len(unique_urls)
+    unique_urls = unique_urls[:MAX_URLS_PER_ANALYSIS]
+
     # 모든 URL 분석
     analyzed = []
     max_score = -1.0
@@ -816,6 +863,8 @@ def analyze_urls(urls, category=None, text=None):
         'category': category or 'UNKNOWN',
         'category_weight': weight,
         'url_count': len(unique_urls),
+        'url_limit_reached': original_url_count > len(unique_urls),
+        'skipped_url_count': max(0, original_url_count - len(unique_urls)),
         'analyzed_urls': analyzed,
         'government_url_override': government_url_override,
         'url_reasons': url_reasons,

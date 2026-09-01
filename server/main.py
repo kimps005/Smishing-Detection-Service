@@ -7,6 +7,7 @@ import traceback
 import html
 import hmac
 from collections import Counter, defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -122,6 +123,11 @@ async def limit_expensive_requests(request: Request, call_next):
 # 즉시 멈출 수 없으므로 짧은 수명의 메모리 이벤트로 협력 취소를 지원한다.
 _analysis_cancellations: dict[str, tuple[threading.Event, float]] = {}
 _analysis_cancel_lock = threading.Lock()
+try:
+    _ANALYSIS_WORKERS = max(1, min(int(os.getenv("ANALYSIS_WORKERS", "2")), 4))
+except ValueError:
+    _ANALYSIS_WORKERS = 2
+_analysis_executor = ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS, thread_name_prefix="analysis")
 
 
 def _analysis_id(request: Request) -> str:
@@ -142,15 +148,14 @@ def _register_analysis(analysis_id: str) -> None:
             _analysis_cancellations.pop(oldest, None)
         _analysis_cancellations[analysis_id] = (threading.Event(), now)
 
+class _BackgroundRequest:
+    """작업 스레드에서 기존 분석 함수가 취소 ID를 읽도록 하는 최소 요청 객체"""
 
-def _cancel_analysis(analysis_id: str) -> bool:
-    with _analysis_cancel_lock:
-        item = _analysis_cancellations.get(analysis_id)
-        if item is None:
-            return False
-        item[0].set()
-        return True
+    def __init__(self, analysis_id: str):
+        self.headers = {"X-Analysis-ID": analysis_id}
 
+    async def is_disconnected(self) -> bool:
+        return False
 
 async def _raise_if_cancelled(request: Request, analysis_id: str) -> None:
     cancelled = False
@@ -160,6 +165,33 @@ async def _raise_if_cancelled(request: Request, analysis_id: str) -> None:
             cancelled = bool(item and item[0].is_set())
     if cancelled or await request.is_disconnected():
         raise HTTPException(status_code=499, detail="분석이 취소되었습니다.")
+
+
+def _run_analysis_coroutine(coroutine_factory, *args):
+    return asyncio.run(coroutine_factory(*args))
+
+
+async def _run_analysis_on_worker(coroutine_factory, *args):
+    """무거운 OCR·URL·VLM 작업은 전용 스레드에서 실행하되 기존 응답 형식은 유지한다."""
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _analysis_executor, _run_analysis_coroutine, coroutine_factory, *args
+        )
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail="분석 작업을 시작할 수 없습니다. 잠시 후 다시 시도해주세요.",
+        )
+
+
+def _cancel_analysis(analysis_id: str) -> bool:
+    with _analysis_cancel_lock:
+        item = _analysis_cancellations.get(analysis_id)
+        if item is None:
+            return False
+        item[0].set()
+    return True
 
 
 async def _read_limited_upload(upload: UploadFile, max_bytes: int, label: str) -> bytes:
@@ -427,6 +459,7 @@ def _record_url_to_db(url: str, category: str, original_feed_hit: bool = False,
 # DB는 모듈 import 시점이 아니라 FastAPI lifespan에서 지연 초기화한다.
 # 환경변수가 없는 로컬 개발/테스트 환경에서도 서버 모듈을 import할 수 있어야 한다.
 url_counter = Counter()
+_url_counter_lock = threading.Lock()
 
 
 # =============================================================
@@ -440,8 +473,11 @@ def _fetch_and_store_phishingdb():
             timeout=30
         )
         resp.raise_for_status()
-        urls = {line.strip() for line in resp.text.splitlines()
-                if line.strip().startswith("http")}
+        urls = {
+            url_analyzer._canonical_feed_url(line.strip())
+            for line in resp.text.splitlines()
+            if line.strip().startswith("http")
+        }
         url_analyzer.phishingdb_urls = urls
         print(f"[Feed] Phishing.Database 갱신 완료 ({len(urls)}개)")
     except Exception as e:
@@ -477,11 +513,10 @@ def _fetch_and_store_urlhaus():
             url = parts[2].strip('"')
             if not url.startswith("http"):
                 continue
-            new_urls.add(url)
+            normalized_url = url_analyzer._canonical_feed_url(url)
+            new_urls.add(normalized_url)
             try:
-                domain = urlparse(url).netloc.lower()
-                if domain.startswith("www."):
-                    domain = domain[4:]
+                domain = url_analyzer.extract_domain(normalized_url)
                 if domain:
                     new_domains.add(domain)
             except Exception:
@@ -584,6 +619,7 @@ _MAX_SCORE = 12
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 _gemini_client = None
+_gemini_client_lock = threading.Lock()
 
 
 def _get_gemini():
@@ -591,7 +627,9 @@ def _get_gemini():
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
     if _gemini_client is None:
-        _gemini_client = google_genai.Client(api_key=GEMINI_API_KEY)
+        with _gemini_client_lock:
+            if _gemini_client is None:
+                _gemini_client = google_genai.Client(api_key=GEMINI_API_KEY)
     return _gemini_client
 
 
@@ -640,7 +678,9 @@ def _build_url_context(analyzed_urls: list) -> str:
         else:
             line += " (연결 정상)"
         if vt.get('is_malicious'):
-            line += f" [보안 엔진 {vt['positive_count']}개 악성 탐지]"
+            line += f" [보안 엔진 {vt.get('malicious_count', vt.get('positive_count', 0))}개 악성 탐지]"
+        elif vt.get('is_suspicious'):
+            line += f" [보안 엔진 {vt.get('suspicious_count', 0)}개 의심 판정]"
         age = whois.get('age_days', -1)
         if age >= 0:
             years = age // 365
@@ -1312,10 +1352,8 @@ def _apply_grade_logic(analysis: dict, grade: str, text: str, has_url: bool, p_n
 # 엔드포인트
 # =============================================================
 
-@app.post("/analyze")
-async def analyze_image(request: Request, file: UploadFile = File(...)):
+async def _analyze_image_impl(request: Request, file: UploadFile):
     analysis_id = _analysis_id(request)
-    _register_analysis(analysis_id)
     if file.content_type and not file.content_type.startswith("image/") \
             and file.content_type != "application/octet-stream":
         raise HTTPException(
@@ -1341,7 +1379,13 @@ async def analyze_image(request: Request, file: UploadFile = File(...)):
         qr_results = []
         decoded_objects = decode(img)
         for obj in decoded_objects:
-            qr_results.append(normalize_url(obj.data.decode("utf-8")))
+            try:
+                qr_text = obj.data.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            normalized_qr = normalize_url(qr_text)
+            if normalized_qr:
+                qr_results.append(normalized_qr)
 
         # ② OCR 텍스트 추출
         raw_text = run_paddleocr(img)
@@ -1477,11 +1521,45 @@ async def analyze_image(request: Request, file: UploadFile = File(...)):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"이미지 분석 중 오류가 발생했습니다: {str(e)}"
+            detail="이미지 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        )
+
+
+async def _image_analysis_job(contents: bytes, filename: str | None, analysis_id: str):
+    upload = UploadFile(
+        file=io.BytesIO(contents),
+        filename=filename or "uploaded_image",
+    )
+    try:
+        return await _analyze_image_impl(_BackgroundRequest(analysis_id), upload)
+    finally:
+        await upload.close()
+
+
+@app.post("/analyze")
+async def analyze_image(request: Request, file: UploadFile = File(...)):
+    analysis_id = _analysis_id(request)
+    _register_analysis(analysis_id)
+    if file.content_type and not file.content_type.startswith("image/") \
+            and file.content_type != "application/octet-stream":
+        raise HTTPException(status_code=400, detail="이미지 파일만 업로드 가능합니다.")
+
+    try:
+        contents = await _read_limited_upload(file, MAX_IMAGE_BYTES, "이미지")
+        return await _run_analysis_on_worker(
+            _image_analysis_job, contents, file.filename, analysis_id
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="이미지 업로드를 처리할 수 없습니다. 잠시 후 다시 시도해주세요.",
         )
 
 
@@ -1504,7 +1582,8 @@ def _record_urls_and_get_rank(urls: list, is_dangerous: bool, category: str = ""
 
     for url in urls:
         key = _normalize_url_key(url)
-        url_counter[key] += 1
+        with _url_counter_lock:
+            url_counter[key] += 1
         data = url_data.get(url, {})
         try:
             _record_url_to_db(
@@ -1516,7 +1595,8 @@ def _record_urls_and_get_rank(urls: list, is_dangerous: bool, category: str = ""
         except Exception as e:
             # DB가 일시적으로 끊겨도 분석 결과 자체는 반환한다.
             print(f"[DB] URL 랭킹 저장 실패: {e}")
-    top5 = [url for url, _ in url_counter.most_common(5)]
+    with _url_counter_lock:
+        top5 = [url for url, _ in url_counter.most_common(5)]
     for url in urls:
         key = _normalize_url_key(url)
         if key in top5:
@@ -1584,7 +1664,8 @@ def _recheck_and_clean_rankings():
             cursor = con.cursor()
             for url in to_remove:
                 cursor.execute("DELETE FROM url_counts WHERE url = %s", (url,))
-                url_counter.pop(url, None)
+                with _url_counter_lock:
+                    url_counter.pop(url, None)
             con.commit()
             cursor.close()
             con.close()
@@ -1632,31 +1713,53 @@ async def submit_feedback(
             f.write(image_bytes)
         image_path = filename
 
-    con = get_db_conn()
-    cursor = con.cursor()
-    cursor.execute(
-        "INSERT INTO feedback (given_grade, correct_grade, reason, text_content, image_path, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-        (given_grade, correct_grade, reason, text_content, image_path, time.time())
-    )
-    con.commit()
-    cursor.close()
-    con.close()
-    return {"status": "ok"}
+    con = None
+    cursor = None
+    try:
+        con = get_db_conn()
+        cursor = con.cursor()
+        cursor.execute(
+            "INSERT INTO feedback (given_grade, correct_grade, reason, text_content, image_path, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (given_grade, correct_grade, reason, text_content, image_path, time.time())
+        )
+        con.commit()
+        return {"status": "ok"}
+    except Exception:
+        print("[DB] 피드백 저장 실패: DB 연결 또는 쿼리 오류")
+        if image_path:
+            try:
+                os.remove(os.path.join(os.path.dirname(__file__), "feedback_images", image_path))
+            except OSError:
+                pass
+        raise HTTPException(status_code=503, detail="피드백을 저장할 수 없습니다. 잠시 후 다시 시도해주세요.")
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if con is not None:
+            con.close()
 
 
 @app.get("/top-urls")
 async def top_urls(limit: int = Query(5, ge=1, le=50)):
-    con = get_db_conn()
-    cursor = con.cursor()
-    cursor.execute("SELECT url, category, count FROM url_counts ORDER BY count DESC LIMIT %s", (limit,))
-    rows = cursor.fetchall()
-    cursor.close()
-    con.close()
-    return {"top_urls": [{"url": url, "category": category, "count": count} for url, category, count in rows]}
+    con = None
+    cursor = None
+    try:
+        con = get_db_conn()
+        cursor = con.cursor()
+        cursor.execute("SELECT url, category, count FROM url_counts ORDER BY count DESC LIMIT %s", (limit,))
+        rows = cursor.fetchall()
+        return {"top_urls": [{"url": url, "category": category, "count": count} for url, category, count in rows]}
+    except Exception as e:
+        print(f"[DB] 상위 URL 조회 실패: {type(e).__name__}")
+        return {"top_urls": [], "db_available": False}
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if con is not None:
+            con.close()
 
 
-@app.post("/analyze-text")
-async def analyze_text(request: Request, data: dict):
+async def _analyze_text_impl(request: Request, data: dict):
     text = data.get("text", "")
     if not isinstance(text, str):
         raise HTTPException(status_code=400, detail="텍스트 형식이 올바르지 않습니다.")
@@ -1666,8 +1769,6 @@ async def analyze_text(request: Request, data: dict):
         raise HTTPException(status_code=413, detail=f"텍스트는 {MAX_TEXT_LENGTH:,}자 이하만 입력할 수 있습니다.")
 
     analysis_id = _analysis_id(request)
-    _register_analysis(analysis_id)
-
     try:
         await _raise_if_cancelled(request, analysis_id)
         clean_text = correct_text(text)
@@ -1750,12 +1851,37 @@ async def analyze_text(request: Request, data: dict):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"텍스트 분석 중 오류가 발생했습니다: {str(e)}"
+            detail="텍스트 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
         )
+
+
+async def _text_analysis_job(text: str, analysis_id: str):
+    return await _analyze_text_impl(
+        _BackgroundRequest(analysis_id),
+        {"text": text},
+    )
+
+
+@app.post("/analyze-text")
+async def analyze_text(request: Request, data: dict):
+    text = data.get("text", "")
+    if not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="텍스트 형식이 올바르지 않습니다.")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="텍스트를 입력해주세요.")
+    if len(text) > MAX_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"텍스트는 {MAX_TEXT_LENGTH:,}자 이하만 입력할 수 있습니다.",
+        )
+
+    analysis_id = _analysis_id(request)
+    _register_analysis(analysis_id)
+    return await _run_analysis_on_worker(_text_analysis_job, text, analysis_id)
 
 
 @app.get("/admin/logs", response_class=HTMLResponse, include_in_schema=False)
@@ -1789,7 +1915,8 @@ async def admin_logs(
         cursor.close()
         con.close()
     except Exception as e:
-        return HTMLResponse(f"<pre>DB 오류: {html_escape(str(e))}</pre>", status_code=500)
+        print(f"[DB] 관리자 로그 조회 실패: {type(e).__name__}")
+        return HTMLResponse("<pre>DB 오류로 관리자 로그를 불러오지 못했습니다.</pre>", status_code=500)
 
     total_pages = max(1, (total + per_page - 1) // per_page)
 

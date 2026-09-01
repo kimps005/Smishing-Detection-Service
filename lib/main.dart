@@ -401,6 +401,7 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
   Future<void> _initShareHandler() async {
     final handler = ShareHandlerPlatform.instance;
     final initialMedia = await handler.getInitialSharedMedia();
+    if (!mounted) return;
     if (initialMedia != null) {
       _handleSharedMedia(initialMedia);
     }
@@ -457,6 +458,7 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
 
   Future<void> _pickImage() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+    if (!mounted) return;
     if (image != null) {
       setState(() { _selectedImage = File(image.path); });
     }
@@ -816,7 +818,7 @@ class _ListPageState extends State<ListPage> {
     if (totalPages <= 5) {
       visiblePages = List.generate(totalPages, (i) => i);
     } else {
-      final start = (currentPage - 2).clamp(0, totalPages - 5);
+      final start = (currentPage - 2).clamp(0, totalPages - 5).toInt();
       visiblePages = List.generate(5, (i) => start + i);
     }
     return Row(
@@ -931,8 +933,8 @@ class _ListPageState extends State<ListPage> {
           }
 
           const pageSize = 5;
-          final totalPages = (urls.isEmpty ? 1 : (urls.length / pageSize).ceil()).clamp(1, 999);
-          final safeCurrentPage = _currentPage.clamp(0, totalPages - 1);
+          final totalPages = (urls.isEmpty ? 1 : (urls.length / pageSize).ceil()).clamp(1, 999).toInt();
+          final safeCurrentPage = _currentPage.clamp(0, totalPages - 1).toInt();
           final pageUrls = urls.skip(safeCurrentPage * pageSize).take(pageSize).toList();
 
           final bottomPad = MediaQuery.of(context).padding.bottom;
@@ -1214,6 +1216,7 @@ class _FeedbackPageState extends State<FeedbackPage> with SingleTickerProviderSt
 
   Future<void> _pickImage() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+    if (!mounted) return;
     if (image != null) setState(() => _selectedImage = File(image.path));
   }
 
@@ -1240,6 +1243,7 @@ class _FeedbackPageState extends State<FeedbackPage> with SingleTickerProviderSt
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}');
       }
+      if (!mounted) return;
       setState(() { _submitted = true; _isLoading = false; });
     } catch (_) {
       if (mounted) {
@@ -1247,7 +1251,7 @@ class _FeedbackPageState extends State<FeedbackPage> with SingleTickerProviderSt
           const SnackBar(content: Text('제출에 실패했습니다. 서버 연결을 확인해주세요.')),
         );
       }
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

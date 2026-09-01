@@ -4,9 +4,12 @@ import threading
 import time
 import io
 import html
+import os
+from dotenv import load_dotenv
 from streamlit_paste_button import paste_image_button
 
-API_URL = "http://127.0.0.1:8000"
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 
 CATEGORY_NAMES = {
     "PERSONAL":   "일반 문자",
@@ -492,7 +495,7 @@ if not st.session_state.analyzing:
             </div>
             """, unsafe_allow_html=True)
 
-# ── 분석 실행 (블로킹) ────────────────────────────────────
+# ── 분석 실행 ────────────────────────────────────────────
 if st.session_state.analyzing:
     file_data = st.session_state.file_data
     if file_data is None:
@@ -524,8 +527,8 @@ if st.session_state.analyzing:
                 api_result["error"] = response.json().get("detail", "알 수 없는 오류")
         except requests.exceptions.ConnectionError:
             api_result["error"] = "connection"
-        except Exception as e:
-            api_result["error"] = str(e)
+        except Exception:
+            api_result["error"] = "분석 요청 처리 중 오류가 발생했습니다."
         finally:
             api_result["done"] = True
 
