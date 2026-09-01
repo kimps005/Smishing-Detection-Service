@@ -64,9 +64,5 @@ import torch
 import main
 
 
-if not hasattr(main.paddle_reader, "predict") and hasattr(main.paddle_reader, "ocr"):
-    main.paddle_reader.predict = lambda image_path: main.paddle_reader.ocr(image_path, cls=True)
-
-
 if __name__ == "__main__":
     uvicorn.run(main.app, host="127.0.0.1", port=8000)

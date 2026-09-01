@@ -74,13 +74,26 @@ def run_easyocr(img, reader):
     return " ".join(text for _, text in lines)
 
 
+def _run_ocr(reader, image_path):
+    """PaddleOCR 2.x/3.x 호출 방식 호환"""
+    predict = getattr(reader, 'predict', None)
+    if callable(predict):
+        return predict(image_path)
+
+    ocr = getattr(reader, 'ocr', None)
+    if callable(ocr):
+        return ocr(image_path, cls=True)
+
+    raise AttributeError('현재 PaddleOCR 객체에서 predict() 또는 ocr()를 찾을 수 없습니다.')
+
+
 def run_paddleocr_url_only(img, reader):
     """PaddleOCR로 URL만 추출"""
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
         tmp_path = tmp.name
         cv2.imwrite(tmp_path, img)
     try:
-        result = reader.predict(tmp_path)
+        result = _run_ocr(reader, tmp_path)
     finally:
         os.remove(tmp_path)
 
