@@ -5,13 +5,18 @@ meal-bbang/Korean_message 데이터셋에서 정상 문자(라벨 0)를 가져�
 
 import requests
 import time
-from datasets import load_dataset
+try:
+    from datasets import load_dataset
+except ImportError:  # 선택적 테스트 의존성
+    load_dataset = None
 
 API_URL = "http://127.0.0.1:8000/analyze-text"
 SAMPLE_SIZE = 50   # 테스트할 샘플 수
 DELAY = 5.0        # API 요청 간격 (초) — Gemini free tier 15 RPM 제한 대응
 
 def run_test():
+    if load_dataset is None:
+        raise RuntimeError("datasets가 필요합니다. `pip install -r requirements.txt`를 실행해주세요.")
     print("데이터셋 로딩 중...")
     ds = load_dataset("meal-bbang/Korean_message", split="train")
     normal_data = [row["content"] for row in ds if row["class"] != 2]

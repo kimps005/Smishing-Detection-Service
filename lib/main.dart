@@ -389,6 +389,7 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
   final TextEditingController _textController = TextEditingController();
   StreamSubscription? _shareSubscription;
   http.Client? _httpClient;
+  String? _analysisId;
 
 
   @override
@@ -430,9 +431,20 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
   }
 
   void _cancelAnalysis() {
+    final id = _analysisId;
     _httpClient?.close();
     _httpClient = null;
-    setState(() { _isLoading = false; });
+    _analysisId = null;
+    if (id != null) unawaited(_sendCancelRequest(id));
+    if (mounted) setState(() { _isLoading = false; });
+  }
+
+  Future<void> _sendCancelRequest(String id) async {
+    try {
+      await http.post(Uri.parse('$serverUrl/analysis/cancel/$id')).timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // 클라이언트 취소는 이미 완료됐으므로 취소 API 실패는 무시한다.
+    }
   }
 
   @override
@@ -452,10 +464,13 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
 
   Future<void> _analyzeImage() async {
     if (_selectedImage == null) return;
+    final analysisId = DateTime.now().microsecondsSinceEpoch.toString();
+    _analysisId = analysisId;
     _httpClient = http.Client();
     setState(() { _isLoading = true; });
     try {
       var request = http.MultipartRequest('POST', Uri.parse('$serverUrl/analyze'));
+      request.headers['X-Analysis-ID'] = analysisId;
       request.files.add(await http.MultipartFile.fromPath('file', _selectedImage!.path));
       var response = await _httpClient!.send(request);
       var responseBody = await response.stream.bytesToString();
@@ -469,26 +484,34 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
         Navigator.push(context, MaterialPageRoute(builder: (context) => ResultPage(result: result)));
       }
     } catch (e) {
-      if (mounted && _isLoading) {
+      if (mounted && _isLoading && _analysisId == analysisId) {
         final msg = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.isEmpty ? '서버 연결에 실패했습니다.' : msg)),
         );
       }
     } finally {
-      _httpClient = null;
-      setState(() { _isLoading = false; });
+      if (_analysisId == analysisId) {
+        _httpClient = null;
+        _analysisId = null;
+        if (mounted) setState(() { _isLoading = false; });
+      }
     }
   }
 
   Future<void> _analyzeText(String text, {bool isQrScan = false}) async {
     if (text.trim().isEmpty) return;
+    final analysisId = DateTime.now().microsecondsSinceEpoch.toString();
+    _analysisId = analysisId;
     _httpClient = http.Client();
     setState(() { _isLoading = true; });
     try {
       final response = await _httpClient!.post(
         Uri.parse('$serverUrl/analyze-text'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Analysis-ID': analysisId,
+        },
         body: jsonEncode({'text': text}),
       );
       if (response.statusCode != 200) {
@@ -501,15 +524,18 @@ class _AnalysisPageState extends State<AnalysisPage> with AutomaticKeepAliveClie
         Navigator.push(context, MaterialPageRoute(builder: (context) => ResultPage(result: result, isQrScan: isQrScan)));
       }
     } catch (e) {
-      if (mounted && _isLoading) {
+      if (mounted && _isLoading && _analysisId == analysisId) {
         final msg = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.isEmpty ? '서버 연결에 실패했습니다.' : msg)),
         );
       }
     } finally {
-      _httpClient = null;
-      setState(() { _isLoading = false; });
+      if (_analysisId == analysisId) {
+        _httpClient = null;
+        _analysisId = null;
+        if (mounted) setState(() { _isLoading = false; });
+      }
     }
   }
 
@@ -1210,7 +1236,10 @@ class _FeedbackPageState extends State<FeedbackPage> with SingleTickerProviderSt
       if (hasImage) {
         request.files.add(await http.MultipartFile.fromPath('image', _selectedImage!.path));
       }
-      await request.send();
+      final response = await request.send();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
       setState(() { _submitted = true; _isLoading = false; });
     } catch (_) {
       if (mounted) {
@@ -1740,7 +1769,7 @@ class ResultPage extends StatelessWidget {
     // AI 종합 분석 카드용 변수
     final Map<String, dynamic> urlAnalysis = (result['url_analysis'] as Map<String, dynamic>?) ?? {};
     final double pUrl = ((result['scores']?['p_url'] ?? 0) as num).toDouble();
-    final bool hasUrl = urlAnalysis.isNotEmpty;
+    final bool hasUrl = textUrls.isNotEmpty || qrUrls.isNotEmpty;
     final bool vtSafe = urlAnalysis['vt_confirmed_safe'] == true;
     final double pGemini = ((result['scores']?['p_gemini'] ?? 0) as num).toDouble();
     final bool geminiHigh = geminiTextSuccess && pGemini >= 5.0;

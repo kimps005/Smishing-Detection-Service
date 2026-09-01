@@ -132,8 +132,27 @@ venv\Scripts\activate
 ### 패키지 설치
 
 ```bash
-pip install fastapi uvicorn paddleocr pymysql transformers huggingface_hub sentencepiece google-genai pillow numpy opencv-python pyzbar requests python-whois streamlit torch python-dotenv
+pip install -r requirements.txt
 ```
+
+운영 DB는 Aiven에서 제공하는 CA 인증서 경로를 `DB_SSL_CA`에 지정하고 `DB_SSL_VERIFY=1`을 유지해야 합니다. 인증서 검증을 끄는 `DB_SSL_VERIFY=0`은 로컬 테스트에서만 사용하세요.
+
+### 모델 배포
+
+분류 모델은 서버를 처음 시작할 때 로컬 경로를 먼저 확인합니다. 모델 파일이 이미 있으면 그대로 사용하고, 없으면 공개 Hugging Face 저장소에서 양자화 가중치와 BERT 설정·토크나이저 파일만 자동으로 내려받아 로컬 경로에 저장합니다. 이후 요청에서는 다시 다운로드하지 않습니다.
+
+```env
+SMS_MODEL_QUANTIZED=1
+SMS_CATEGORY_MODEL_PATH=
+SMS_BASE_MODEL_PATH=
+SMS_HF_REPO_ID=kimps005/sms-category-model
+SMS_HF_MODEL_FILENAME=sms_category_model_int8_dynamic_state_dict.pt
+SMS_HF_REVISION=b0267b3befd229165127de5cf402414d427863fa
+```
+
+분류 모델 Hugging Face 주소: [kimps005/sms-category-model](https://huggingface.co/kimps005/sms-category-model)
+
+기본 경로는 프로젝트의 `models/sms_category_model_int8_dynamic_state_dict.pt`와 `models/klue-bert-base/`입니다. 경로를 직접 지정하고 싶을 때만 `SMS_CATEGORY_MODEL_PATH`와 `SMS_BASE_MODEL_PATH`를 설정하면 됩니다. 공개 저장소이므로 별도 Hugging Face 토큰은 필요하지 않습니다. 전체 `klue/bert-base` 가중치는 받지 않고, 모델 구조를 만드는 데 필요한 설정·토크나이저 파일만 받습니다.
 
 ### API 서버 실행
 
@@ -155,7 +174,18 @@ streamlit run app.py
 flutter run
 ```
 
-> 참고: `server/sms_category_model.pt` 파일은 별도 배포 또는 복사가 필요할 수 있습니다.
+> 참고: 원본 FP32 모델은 약 427MB, 양자화 모델도 약 179MB이므로 GitHub에는 Git LFS 포인터만 저장하고 실제 파일은 Hugging Face에서 배포합니다.
+
+### 양자화 벤치마크
+
+`benchmark_quantization.py`는 동일한 데이터셋에서 FP32와 INT8 동적 양자화 모델의 정확도, F1, 메모리, 추론 지연시간을 비교합니다. 원본 FP32 체크포인트를 `SMS_CATEGORY_MODEL_PATH`로 지정한 뒤 실행합니다.
+
+```bash
+python benchmark_quantization.py --variant fp32
+python benchmark_quantization.py --variant int8_dynamic
+```
+
+양자화 체크포인트는 기본적으로 `models/sms_category_model_int8_dynamic_state_dict.pt`에 저장됩니다.
 
 ---
 
@@ -167,7 +197,7 @@ flutter run
 | POST | `/analyze-text` | 텍스트 분석 |
 | GET | `/top-urls?limit=50` | 위험 URL 랭킹 조회 |
 | POST | `/feedback` | 사용자 피드백 제출 |
-| GET | `/admin/logs` | 관리자 분석 로그 조회 |
+| GET | `/admin/logs` | 관리자 분석 로그 조회 (`Authorization: Bearer <ADMIN_TOKEN>` 필요) |
 
 ---
 
@@ -182,7 +212,6 @@ flutter run
 | PaddleOCR | 2.7.3 | OCR 텍스트 추출 |
 | PyMySQL | 1.1.3 | MySQL 연동 |
 | transformers | 5.3.0 | BERT 기반 분류 모델 |
-| huggingface_hub | 1.7.2 | 모델 다운로드 |
 | google-genai | 2.4.0 | Gemini 연동 |
 | Pillow | 11.0.0 | 이미지 처리 |
 | numpy | 1.26.4 | 수치 연산 |

@@ -408,6 +408,12 @@ function showToast(msg, ok) {
 }
 
 // ── 순위 로딩 ──
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  }[ch]));
+}
+
 async function loadRanking() {
   document.getElementById('rankingList').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-3);">불러오는 중...</div>';
   try {
@@ -460,9 +466,9 @@ function renderPage() {
       : `<span style="font-size:0.85rem;font-weight:800;color:var(--text-2);">${i+1}위</span>`;
     return `<div class="rank-item" style="background:${bg};border:${border};">
       <div class="rank-num">${rankDisp}</div>
-      <div class="rank-url" title="${item.url}">${item.url}</div>
-      <span class="rank-cat-badge" style="background:${color}22;color:${color};border:1px solid ${color}44;">${catName}</span>
-      <div class="rank-count">탐지 <strong>${item.count}</strong>회</div>
+      <div class="rank-url" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>
+      <span class="rank-cat-badge" style="background:${color}22;color:${color};border:1px solid ${color}44;">${escapeHtml(catName)}</span>
+      <div class="rank-count">탐지 <strong>${escapeHtml(item.count)}</strong>회</div>
     </div>`;
   }).join('');
 

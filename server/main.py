@@ -1,16 +1,19 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query, Header
 from fastapi.responses import HTMLResponse
 from typing import Optional
 import os
 import tempfile
 import traceback
+import html
+import hmac
+from collections import Counter, defaultdict, deque
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 os.environ['FLAGS_enable_pir_api'] = '0'
 # PaddlePaddle can preload DLLs that conflict with PyTorch on Windows.
 # Load the PyTorch-based predictor first so the API process starts reliably.
-from predictor import predict
+from predictor import load_model, predict
 from paddleocr import PaddleOCR
 import numpy as np
 import cv2
@@ -21,8 +24,10 @@ from google import genai as google_genai
 import PIL.Image
 
 import url_analyzer
-from url_analyzer import analyze_urls, resolve_url, check_threat_feeds, check_virustotal
-from collections import Counter
+from url_analyzer import (
+    analyze_urls, resolve_url, check_threat_feeds, check_virustotal,
+    validate_public_url,
+)
 import requests
 from db_config import get_db_conn
 import zipfile
@@ -38,6 +43,16 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global url_counter
+    load_model()
+    print("[predictor] 서버 시작 시 분류 모델 준비 및 로드 완료")
+    try:
+        url_counter = _load_url_counter()
+        print(f"[DB] 초기화 완료 (URL {len(url_counter)}개)")
+    except Exception as e:
+        # DB가 설정되지 않은 로컬 개발 환경에서도 OCR/API 서버는 시작할 수 있어야 한다.
+        url_counter = Counter()
+        print(f"[DB] 시작 시 초기화 생략: {e}")
     threading.Thread(target=_update_feeds, daemon=True).start()
 
     async def _periodic_refresh():
@@ -62,6 +77,114 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# 요청 크기·빈도 제한은 OCR/VLM 및 외부 URL 조회가 포함된 공개 API의 기본 방어선이다.
+MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(10 * 1024 * 1024)))
+MAX_FEEDBACK_IMAGE_BYTES = int(os.getenv("MAX_FEEDBACK_IMAGE_BYTES", str(5 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", str(25_000_000)))
+MAX_TEXT_LENGTH = int(os.getenv("MAX_TEXT_LENGTH", "20000"))
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+
+_RATE_LIMITS = {
+    "/analyze": (10, 60),
+    "/analyze-text": (30, 60),
+    "/feedback": (20, 60),
+}
+_rate_buckets: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+_rate_lock = threading.Lock()
+
+
+@app.middleware("http")
+async def limit_expensive_requests(request: Request, call_next):
+    limit_config = _RATE_LIMITS.get(request.url.path)
+    if limit_config:
+        max_requests, window_seconds = limit_config
+        client_host = request.client.host if request.client else "unknown"
+        bucket_key = (client_host, request.url.path)
+        now = time.monotonic()
+        with _rate_lock:
+            bucket = _rate_buckets[bucket_key]
+            while bucket and now - bucket[0] >= window_seconds:
+                bucket.popleft()
+            if len(bucket) >= max_requests:
+                retry_after = max(1, int(window_seconds - (now - bucket[0])))
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "요청이 너무 많습니다. 잠시 후 다시 시도해주세요."},
+                    headers={"Retry-After": str(retry_after)},
+                )
+            bucket.append(now)
+    return await call_next(request)
+
+
+# 취소 요청은 클라이언트가 연결을 끊는 것만으로는 이미 시작된 OCR/VLM 작업을
+# 즉시 멈출 수 없으므로 짧은 수명의 메모리 이벤트로 협력 취소를 지원한다.
+_analysis_cancellations: dict[str, tuple[threading.Event, float]] = {}
+_analysis_cancel_lock = threading.Lock()
+
+
+def _analysis_id(request: Request) -> str:
+    return request.headers.get("X-Analysis-ID", "").strip()[:80]
+
+
+def _register_analysis(analysis_id: str) -> None:
+    if not analysis_id:
+        return
+    now = time.monotonic()
+    with _analysis_cancel_lock:
+        expired = [key for key, (_, created) in _analysis_cancellations.items()
+                   if now - created > 600]
+        for key in expired:
+            _analysis_cancellations.pop(key, None)
+        if len(_analysis_cancellations) >= 1000:
+            oldest = min(_analysis_cancellations, key=lambda key: _analysis_cancellations[key][1])
+            _analysis_cancellations.pop(oldest, None)
+        _analysis_cancellations[analysis_id] = (threading.Event(), now)
+
+
+def _cancel_analysis(analysis_id: str) -> bool:
+    with _analysis_cancel_lock:
+        item = _analysis_cancellations.get(analysis_id)
+        if item is None:
+            return False
+        item[0].set()
+        return True
+
+
+async def _raise_if_cancelled(request: Request, analysis_id: str) -> None:
+    cancelled = False
+    if analysis_id:
+        with _analysis_cancel_lock:
+            item = _analysis_cancellations.get(analysis_id)
+            cancelled = bool(item and item[0].is_set())
+    if cancelled or await request.is_disconnected():
+        raise HTTPException(status_code=499, detail="분석이 취소되었습니다.")
+
+
+async def _read_limited_upload(upload: UploadFile, max_bytes: int, label: str) -> bytes:
+    chunks = []
+    total = 0
+    chunk_size = 1024 * 1024
+    while True:
+        chunk = await upload.read(min(chunk_size, max_bytes - total + 1))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail=f"{label} 크기는 {max_bytes // (1024 * 1024)}MB 이하만 허용됩니다.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _require_admin_token(authorization: str | None) -> None:
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="관리자 기능이 설정되지 않았습니다.")
+    supplied = (authorization or "").strip()
+    if supplied.lower().startswith("bearer "):
+        supplied = supplied[7:].strip()
+    if not hmac.compare_digest(supplied, ADMIN_TOKEN):
+        raise HTTPException(status_code=401, detail="관리자 인증이 필요합니다.")
 
 # ── 정적 파일 / 프론트엔드 페이지 서빙 ───────────────────────
 from fastapi.staticfiles import StaticFiles
@@ -301,7 +424,9 @@ def _record_url_to_db(url: str, category: str, original_feed_hit: bool = False,
     cursor.close()
     con.close()
 
-url_counter = _load_url_counter()
+# DB는 모듈 import 시점이 아니라 FastAPI lifespan에서 지연 초기화한다.
+# 환경변수가 없는 로컬 개발/테스트 환경에서도 서버 모듈을 import할 수 있어야 한다.
+url_counter = Counter()
 
 
 # =============================================================
@@ -770,18 +895,13 @@ def normalize_url(url: str) -> str:
 
 
 def is_valid_url(url: str) -> bool:
+    candidate = url if url.startswith(("http://", "https://")) else "http://" + url
+    valid, _ = validate_public_url(candidate, resolve_dns=False)
+    if not valid:
+        return False
     try:
-        parsed = urlparse(url if url.startswith("http") else "http://" + url)
-        netloc = parsed.netloc.lower()
-        if netloc.startswith("www."):
-            netloc = netloc[4:]
-        elif netloc.startswith("m."):
-            netloc = netloc[2:]
-        if not netloc or netloc in INVALID_DOMAINS:
-            return False
-        if "." not in netloc and len(netloc) < 4:
-            return False
-        return True
+        hostname = (urlparse(candidate).hostname or "").lower().removeprefix("www.").removeprefix("m.")
+        return hostname not in INVALID_DOMAINS and ("." in hostname or len(hostname) >= 4)
     except Exception:
         return False
 
@@ -1180,7 +1300,9 @@ def _apply_grade_logic(analysis: dict, grade: str, text: str, has_url: bool, p_n
 # =============================================================
 
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze_image(request: Request, file: UploadFile = File(...)):
+    analysis_id = _analysis_id(request)
+    _register_analysis(analysis_id)
     if file.content_type and not file.content_type.startswith("image/") \
             and file.content_type != "application/octet-stream":
         raise HTTPException(
@@ -1189,7 +1311,8 @@ async def analyze_image(file: UploadFile = File(...)):
         )
 
     try:
-        contents = await file.read()
+        contents = await _read_limited_upload(file, MAX_IMAGE_BYTES, "이미지")
+        await _raise_if_cancelled(request, analysis_id)
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
@@ -1198,6 +1321,8 @@ async def analyze_image(file: UploadFile = File(...)):
                 status_code=400,
                 detail="이미지를 읽을 수 없습니다. 파일이 손상되었는지 확인해주세요."
             )
+        if img.shape[0] * img.shape[1] > MAX_IMAGE_PIXELS:
+            raise HTTPException(status_code=413, detail="이미지 해상도가 너무 큽니다.")
 
         # ① QR 코드 추출
         qr_results = []
@@ -1207,6 +1332,7 @@ async def analyze_image(file: UploadFile = File(...)):
 
         # ② OCR 텍스트 추출
         raw_text = run_paddleocr(img)
+        await _raise_if_cancelled(request, analysis_id)
         clean_text = correct_text(raw_text)
 
         # URL 추출
@@ -1228,6 +1354,7 @@ async def analyze_image(file: UploadFile = File(...)):
         # Gemini 통합 분석 (VLM + 텍스트 스미싱 판단 1회 호출, URL 있으면 표시)
         _gemini_text = clean_text_no_url + ("\n추출된 URL: " + ", ".join(all_urls) if all_urls else "")
         _combined = await analyze_image_and_text_combined(contents, _gemini_text)
+        await _raise_if_cancelled(request, analysis_id)
         vlm_result = _combined["vlm"]
 
         if ocr_failed:
@@ -1246,7 +1373,12 @@ async def analyze_image(file: UploadFile = File(...)):
                 },
                 "nlp_analysis": {"text_risk_score": 0.0, "risk_keywords": []},
                 "url_analysis": {},
-                "scores": {"p_nlp": 0.0, "p_url": 0.0, "final": 0.0},
+                "scores": {
+                    "p_nlp": 0.0, "p_url": 0.0,
+                    "p_gemini": None,
+                    "p_vlm": round(vlm_result["vlm_smishing_score"] * 10, 4) if vlm_result.get("success") else None,
+                    "final": 0.0,
+                },
                 "result": {"grade": "Unknown", "message": "이미지에서 텍스트를 인식할 수 없습니다. 선명한 이미지로 다시 시도해주세요."},
             }
 
@@ -1256,6 +1388,8 @@ async def analyze_image(file: UploadFile = File(...)):
         gemini_text_result = _combined["text"]
         p_gemini = round(gemini_text_result["gemini_smishing_score"] * 10, 4) if gemini_text_result["success"] else None
         p_vlm = round(vlm_result["vlm_smishing_score"] * 10, 4) if vlm_result["success"] else None
+        analysis["scores"]["p_gemini"] = p_gemini
+        analysis["scores"]["p_vlm"] = p_vlm
         if gemini_text_result["success"] and (
             gemini_text_result["gemini_smishing_score"] < 0.3
             or gemini_text_result["gemini_smishing_score"] >= 0.5
@@ -1328,6 +1462,8 @@ async def analyze_image(file: UploadFile = File(...)):
             **analysis,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(
@@ -1357,18 +1493,29 @@ def _record_urls_and_get_rank(urls: list, is_dangerous: bool, category: str = ""
         key = _normalize_url_key(url)
         url_counter[key] += 1
         data = url_data.get(url, {})
-        _record_url_to_db(
-            url, category,
-            original_feed_hit=data.get('feed_hit', False),
-            original_vt_positive=data.get('vt_positive', 0),
-            resolve_error=data.get('resolve_error', False),
-        )
+        try:
+            _record_url_to_db(
+                url, category,
+                original_feed_hit=data.get('feed_hit', False),
+                original_vt_positive=data.get('vt_positive', 0),
+                resolve_error=data.get('resolve_error', False),
+            )
+        except Exception as e:
+            # DB가 일시적으로 끊겨도 분석 결과 자체는 반환한다.
+            print(f"[DB] URL 랭킹 저장 실패: {e}")
     top5 = [url for url, _ in url_counter.most_common(5)]
     for url in urls:
         key = _normalize_url_key(url)
         if key in top5:
             return top5.index(key) + 1
     return None
+
+
+@app.post("/analysis/cancel/{analysis_id}")
+async def cancel_analysis(analysis_id: str):
+    if not analysis_id or len(analysis_id) > 80:
+        raise HTTPException(status_code=400, detail="분석 ID가 올바르지 않습니다.")
+    return {"status": "cancelled" if _cancel_analysis(analysis_id) else "not_found"}
 
 
 def _recheck_and_clean_rankings():
@@ -1442,20 +1589,34 @@ def _run_recheck_and_mark():
 
 @app.post("/feedback")
 async def submit_feedback(
+    request: Request,
     given_grade: str = Form(...),
     correct_grade: str = Form(...),
     reason: str = Form(""),
     text_content: str = Form(""),
     image: Optional[UploadFile] = File(None),
 ):
+    allowed_grades = {"Danger", "Warning", "Safe"}
+    if given_grade not in allowed_grades or correct_grade not in allowed_grades:
+        raise HTTPException(status_code=400, detail="판정 등급이 올바르지 않습니다.")
+    if len(reason) > 5000 or len(text_content) > MAX_TEXT_LENGTH:
+        raise HTTPException(status_code=413, detail="피드백 내용이 너무 깁니다.")
+
     image_path = None
     if image and image.filename:
-        ext = os.path.splitext(image.filename)[-1] or ".png"
+        if image.content_type and not image.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="이미지 파일만 첨부할 수 있습니다.")
+        image_bytes = await _read_limited_upload(image, MAX_FEEDBACK_IMAGE_BYTES, "첨부 이미지")
+        if cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR) is None:
+            raise HTTPException(status_code=400, detail="첨부 이미지를 읽을 수 없습니다.")
+        ext = os.path.splitext(image.filename)[-1].lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+            ext = ".png"
         filename = f"feedback_{int(time.time() * 1000)}{ext}"
         save_dir = os.path.join(os.path.dirname(__file__), "feedback_images")
         save_path = os.path.join(save_dir, filename)
         with open(save_path, "wb") as f:
-            f.write(await image.read())
+            f.write(image_bytes)
         image_path = filename
 
     con = get_db_conn()
@@ -1471,7 +1632,7 @@ async def submit_feedback(
 
 
 @app.get("/top-urls")
-async def top_urls(limit: int = 5):
+async def top_urls(limit: int = Query(5, ge=1, le=50)):
     con = get_db_conn()
     cursor = con.cursor()
     cursor.execute("SELECT url, category, count FROM url_counts ORDER BY count DESC LIMIT %s", (limit,))
@@ -1482,12 +1643,20 @@ async def top_urls(limit: int = 5):
 
 
 @app.post("/analyze-text")
-async def analyze_text(data: dict):
+async def analyze_text(request: Request, data: dict):
     text = data.get("text", "")
+    if not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="텍스트 형식이 올바르지 않습니다.")
     if not text.strip():
         raise HTTPException(status_code=400, detail="텍스트를 입력해주세요.")
+    if len(text) > MAX_TEXT_LENGTH:
+        raise HTTPException(status_code=413, detail=f"텍스트는 {MAX_TEXT_LENGTH:,}자 이하만 입력할 수 있습니다.")
+
+    analysis_id = _analysis_id(request)
+    _register_analysis(analysis_id)
 
     try:
+        await _raise_if_cancelled(request, analysis_id)
         clean_text = correct_text(text)
         text_urls, clean_text_no_url = _clean_and_extract_urls(clean_text)
 
@@ -1497,7 +1666,10 @@ async def analyze_text(data: dict):
         # Gemini 텍스트 스미싱 판단 (팀원2의 _build_url_context 방식 사용)
         url_context = _build_url_context(analysis.get('url_analysis', {}).get('analyzed_urls', []))
         gemini_text_result = await analyze_text_vlm(clean_text_no_url, url_context)
+        await _raise_if_cancelled(request, analysis_id)
         p_gemini = round(gemini_text_result["gemini_smishing_score"] * 10, 4) if gemini_text_result["success"] else None
+        analysis["scores"]["p_gemini"] = p_gemini
+        analysis["scores"]["p_vlm"] = None
         if gemini_text_result["success"] and (
             gemini_text_result["gemini_smishing_score"] < 0.3
             or gemini_text_result["gemini_smishing_score"] >= 0.5
@@ -1563,6 +1735,8 @@ async def analyze_text(data: dict):
             **analysis,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(
@@ -1572,8 +1746,16 @@ async def analyze_text(data: dict):
 
 
 @app.get("/admin/logs", response_class=HTMLResponse, include_in_schema=False)
-async def admin_logs(page: int = 1, grade: str = ""):
+async def admin_logs(
+    authorization: str | None = Header(default=None),
+    page: int = Query(1, ge=1),
+    grade: str = Query("", max_length=16),
+):
+    _require_admin_token(authorization)
     import json as _json
+    html_escape = html.escape
+    if grade not in {"", "Danger", "Warning", "Safe"}:
+        raise HTTPException(status_code=400, detail="등급 필터가 올바르지 않습니다.")
     per_page = 50
     offset = (page - 1) * per_page
     try:
@@ -1594,7 +1776,7 @@ async def admin_logs(page: int = 1, grade: str = ""):
         cursor.close()
         con.close()
     except Exception as e:
-        return HTMLResponse(f"<pre>DB 오류: {e}</pre>", status_code=500)
+        return HTMLResponse(f"<pre>DB 오류: {html_escape(str(e))}</pre>", status_code=500)
 
     total_pages = max(1, (total + per_page - 1) // per_page)
 
@@ -1625,11 +1807,14 @@ async def admin_logs(page: int = 1, grade: str = ""):
         urls = safe_json(urls_json)
         keywords = safe_json(kw_json)
         kw_text = "있음" if keywords else "-"
-        url_text = "<br>".join(f'<span style="font-size:11px;color:#aaa">{u}</span>' for u in urls) if urls else "-"
-        text_preview = (text or "")[:80].replace("<", "&lt;").replace(">", "&gt;")
+        url_text = "<br>".join(
+            f'<span style="font-size:11px;color:#aaa">{html_escape(str(u))}</span>'
+            for u in urls
+        ) if urls else "-"
+        text_preview = html_escape(str(text or "")[:80])
         if len(text or "") > 80:
             text_preview += "…"
-        gemini_short = (gemini_reason or "")[:60].replace("<", "&lt;").replace(">", "&gt;")
+        gemini_short = html_escape(str(gemini_reason or "")[:60])
         s_score = _fmt(score)
         s_conf = f"{cat_conf:.2f}" if cat_conf else "0.00"
         s_nlp = _fmt(p_nlp)
@@ -1640,10 +1825,10 @@ async def admin_logs(page: int = 1, grade: str = ""):
         <tr>
           <td style="color:#888;font-size:11px">{rid}</td>
           <td style="font-size:11px;white-space:nowrap">{fmt_time(created_at)}</td>
-          <td style="text-align:center">{type_labels.get(input_type, input_type or "-")}</td>
-          <td style="text-align:center;font-weight:bold;color:{color}">{g or "-"}</td>
+          <td style="text-align:center">{html_escape(type_labels.get(input_type, input_type or "-"))}</td>
+          <td style="text-align:center;font-weight:bold;color:{color}">{html_escape(g or "-")}</td>
           <td style="text-align:center">{s_score}</td>
-          <td style="font-size:11px">{cat or "-"} <span style="color:#888">({s_conf})</span></td>
+          <td style="font-size:11px">{html_escape(str(cat or "-"))} <span style="color:#888">({s_conf})</span></td>
           <td style="font-size:11px;text-align:center">{s_nlp}</td>
           <td style="font-size:11px;text-align:center">{s_url}</td>
           <td style="font-size:11px;text-align:center">{s_gem}</td>
@@ -1664,7 +1849,7 @@ async def admin_logs(page: int = 1, grade: str = ""):
         for g in ["", "Danger", "Warning", "Safe"]
     )
 
-    html = f"""<!DOCTYPE html>
+    html_page = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -1695,4 +1880,4 @@ async def admin_logs(page: int = 1, grade: str = ""):
 <div style="margin-top:16px">{pager}</div>
 </body>
 </html>"""
-    return HTMLResponse(html)
+    return HTMLResponse(html_page)

@@ -3,13 +3,20 @@
 import os
 import sys
 import types
+import importlib.util
+from pathlib import Path
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "server"))
 
 
-torch_lib = r"C:\Users\SAMSUNG\AppData\Local\Programs\Python\Python311\Lib\site-packages\torch\lib"
-_torch_dll_handle = os.add_dll_directory(torch_lib)
+torch_spec = importlib.util.find_spec("torch")
+if torch_spec is None or not torch_spec.submodule_search_locations:
+    raise RuntimeError("PyTorch가 설치되어 있지 않습니다.")
+torch_lib = Path(next(iter(torch_spec.submodule_search_locations))) / "lib"
+_torch_dll_handle = None
+if os.name == "nt" and torch_lib.is_dir():
+    _torch_dll_handle = os.add_dll_directory(str(torch_lib))
 
 
 class _Cursor:

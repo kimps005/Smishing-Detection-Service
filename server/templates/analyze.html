@@ -300,6 +300,7 @@ const KW_LABELS = {
 // ── 상태 ──
 let currentFile = null;
 let abortCtrl = null;
+let activeAnalysisId = null;
 let qrScanner = null;
 let qrDetected = false;
 let qrPendingText = null;
@@ -429,7 +430,15 @@ function stopCamera() {
 // ── 분석 실행 ──
 document.getElementById('btnAnalyze').addEventListener('click', runAnalysis);
 document.getElementById('btnStop').addEventListener('click', () => {
-  if (abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
+  if (abortCtrl) {
+    const id = activeAnalysisId;
+    abortCtrl.abort();
+    abortCtrl = null;
+    activeAnalysisId = null;
+    if (id) {
+      fetch(`/analysis/cancel/${encodeURIComponent(id)}`, {method: 'POST', keepalive: true}).catch(() => {});
+    }
+  }
 });
 
 async function runAnalysis() {
@@ -445,13 +454,16 @@ async function runAnalysis() {
   showLoading();
   document.getElementById('loadingText').textContent = isTextMode ? '분석 중...' : '이미지 분석 시 처리 시간이 다소 걸릴 수 있습니다';
   abortCtrl = new AbortController();
+  activeAnalysisId = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   try {
     let data;
     if (isTextMode) {
       const res = await fetch('/analyze-text', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-Analysis-ID': activeAnalysisId},
         body: JSON.stringify({text}),
         signal: abortCtrl.signal,
       });
@@ -461,7 +473,9 @@ async function runAnalysis() {
       const form = new FormData();
       form.append('file', currentFile);
       const res = await fetch('/analyze', {
-        method: 'POST', body: form, signal: abortCtrl.signal,
+        method: 'POST', body: form,
+        headers: {'X-Analysis-ID': activeAnalysisId},
+        signal: abortCtrl.signal,
       });
       if (!res.ok) { let d='서버 오류'; try{d=(await res.json()).detail||d;}catch{} throw new Error(d); }
       data = await res.json();
@@ -470,10 +484,19 @@ async function runAnalysis() {
   } catch (e) {
     if (e.name === 'AbortError') { resetResult(); return; }
     showError(e.message);
+  } finally {
+    abortCtrl = null;
+    activeAnalysisId = null;
   }
 }
 
 // ── 결과 렌더링 ──
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  }[ch]));
+}
+
 function renderResult(d) {
   const gradeKey = d.category?.category === 'UNKNOWN' ? 'Unknown' : (d.result?.grade || 'Safe');
   const cfg = GRADE[gradeKey] || GRADE.Safe;
@@ -493,8 +516,8 @@ function renderResult(d) {
   document.getElementById('gradeCard').innerHTML = `
     <div class="grade-icon">${cfg.icon}</div>
     <div class="grade-label">${cfg.label}</div>
-    ${catLabel ? `<div class="grade-cat">${catLabel}</div>` : ''}
-    <div class="grade-msg">${msg}</div>
+    ${catLabel ? `<div class="grade-cat">${escapeHtml(catLabel)}</div>` : ''}
+    <div class="grade-msg">${escapeHtml(msg)}</div>
   `;
   document.getElementById('gradeCard').style.background = cfg.color;
 
@@ -517,7 +540,7 @@ function renderResult(d) {
   // 행동 가이드
   const ag = document.getElementById('actionGuide');
   ag.style.cssText = `background:${cfg.bg};border:1px solid ${cfg.color}44;color:${cfg.color};`;
-  ag.innerHTML = `<strong>행동 가이드</strong><br>${ACTION_GUIDE[gradeKey] || ''}`;
+  ag.innerHTML = `<strong>행동 가이드</strong><br>${escapeHtml(ACTION_GUIDE[gradeKey] || '')}`;
 
   // KISA 링크
   document.getElementById('kisaLink').style.display = gradeKey === 'Danger' ? '' : 'none';
@@ -565,7 +588,7 @@ function renderResult(d) {
       <div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">
         AI 문맥 분석 <span class="gemini-badge">Gemini</span>
       </div>
-      <div style="font-size:13.5px;color:var(--text-2);">${gem.reason}</div>`;
+        <div style="font-size:13.5px;color:var(--text-2);">${escapeHtml(gem.reason)}</div>`;
   } else { gemCard.style.display = 'none'; }
 
   // VLM 카드
@@ -574,14 +597,14 @@ function renderResult(d) {
     vlmCard.style.display = '';
     vlmCard.style.borderColor = gColor + '44';
     const chips = vlm.visual_signals.map(s =>
-      `<span class="keyword-chip" style="background:#7c3aed22;color:#7c3aed;border:1px solid #7c3aed44;">${s}</span>`
+      `<span class="keyword-chip" style="background:#7c3aed22;color:#7c3aed;border:1px solid #7c3aed44;">${escapeHtml(s)}</span>`
     ).join('');
     vlmCard.innerHTML = `
       <div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">
         AI 시각 분석 <span class="gemini-badge gemini-badge-v">Gemini Vision</span>
       </div>
       ${chips}
-      ${vlm.reason ? `<div style="font-size:12px;color:var(--text-3);margin-top:8px;">${vlm.reason}</div>` : ''}`;
+      ${vlm.reason ? `<div style="font-size:12px;color:var(--text-3);margin-top:8px;">${escapeHtml(vlm.reason)}</div>` : ''}`;
   } else { vlmCard.style.display = 'none'; }
 
   // 키워드 카드
@@ -591,7 +614,7 @@ function renderResult(d) {
     const chips = keywords.map(kw => {
       const [label, color] = KW_LABELS[kw.type] || [kw.type, '#64748b'];
       return `<span class="keyword-chip" style="background:${color}22;color:${color};border:1px solid ${color}55;">
-        ${kw.keyword} <span style="opacity:0.7;font-size:10px;">[${label}]</span>
+        ${escapeHtml(kw.keyword)} <span style="opacity:0.7;font-size:10px;">[${escapeHtml(label)}]</span>
       </span>`;
     }).join('');
     kwCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">탐지된 위험 키워드</div>${chips}`;
@@ -604,7 +627,7 @@ function renderResult(d) {
   if (textReasons.length) {
     trCard.style.display = '';
     trCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">문자 내용 탐지 근거</div>`
-      + textReasons.map(r => `<div class="reason-item"><span class="reason-dot" style="color:${cfg.color};">•</span><span class="reason-text">${r}</span></div>`).join('');
+      + textReasons.map(r => `<div class="reason-item"><span class="reason-dot" style="color:${cfg.color};">•</span><span class="reason-text">${escapeHtml(r)}</span></div>`).join('');
   } else { trCard.style.display = 'none'; }
 
   // URL 근거
@@ -612,7 +635,7 @@ function renderResult(d) {
   if (urlReasons.length) {
     urCard.style.display = '';
     urCard.innerHTML = `<div style="font-size:13px;color:var(--text-3);margin-bottom:8px;">URL 탐지 근거</div>`
-      + urlReasons.map(r => `<div class="reason-item"><span class="reason-dot" style="color:${cfg.color};">•</span><span class="reason-text">${r}</span></div>`).join('');
+      + urlReasons.map(r => `<div class="reason-item"><span class="reason-dot" style="color:${cfg.color};">•</span><span class="reason-text">${escapeHtml(r)}</span></div>`).join('');
   } else { urCard.style.display = 'none'; }
 
   showResult();
@@ -675,7 +698,7 @@ function showError(msg) {
   document.getElementById('emptyState').innerHTML = `
     <div class="empty-state-icon">⚠️</div>
     <p style="color:var(--danger);font-weight:600;">분석 오류</p>
-    <p>${msg}</p>
+    <p>${escapeHtml(msg)}</p>
     <button class="btn btn-secondary" style="margin-top:0.8rem;" onclick="resetResult();this.parentElement.innerHTML='<div class=\\'empty-state-icon\\'>🛡️</div><p>이미지 또는 텍스트를 입력하고<br>분석 버튼을 눌러주세요.</p>'">다시 시도</button>
   `;
 }

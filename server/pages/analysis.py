@@ -3,6 +3,7 @@ import requests
 import threading
 import time
 import io
+import html
 from streamlit_paste_button import paste_image_button
 
 API_URL = "http://127.0.0.1:8000"
@@ -233,6 +234,8 @@ if not st.session_state.analyzing:
         cfg          = GRADE_CONFIG.get(grade_key, GRADE_CONFIG["Safe"])
         name_map     = CATEGORY_NAMES_SAFE if grade_key == "Safe" else CATEGORY_NAMES
         cat_label    = "" if grade_key == "Unknown" else name_map.get(category, category)
+        safe_cat_label = html.escape(str(cat_label), quote=True)
+        safe_msg = html.escape(str(msg), quote=True)
         text_reasons = result.get("text_reasons", [])
         url_reasons  = result.get("url_reasons", [])
         low_confidence = result.get("low_confidence_warning", False)
@@ -251,9 +254,9 @@ if not st.session_state.analyzing:
                      text-align:center; color:white; margin-bottom:1rem;'>
                     <div style='font-size:2.5rem;'>{cfg["icon"]}</div>
                     <div style='font-size:1.8rem; font-weight:800; margin-top:0.3rem;'>{cfg["label"]}</div>
-                    <div style='display:inline-block; background:rgba(255,255,255,0.25); padding:2px 12px;
-                         border-radius:20px; font-size:0.85rem; font-weight:600; margin-top:0.4rem;'>{cat_label}</div>
-                    <div style='font-size:0.9rem; opacity:0.85; margin-top:0.2rem;'>{msg}</div>
+                     <div style='display:inline-block; background:rgba(255,255,255,0.25); padding:2px 12px;
+                          border-radius:20px; font-size:0.85rem; font-weight:600; margin-top:0.4rem;'>{safe_cat_label}</div>
+                     <div style='font-size:0.9rem; opacity:0.85; margin-top:0.2rem;'>{safe_msg}</div>
                     {safe_reason_html}
                 </div>
                 """, unsafe_allow_html=True)
@@ -313,7 +316,7 @@ if not st.session_state.analyzing:
                     <textarea id="shareBox" readonly style="width:100%; height:110px; font-size:14px;
                         font-family:'Pretendard', 'Apple SD Gothic Neo', sans-serif; line-height:1.6;
                         border:1px solid #e2e8f0; border-radius:8px; padding:10px;
-                        resize:none; background:#f8fafc; color:#374151;">{share_text}</textarea>
+                        resize:none; background:#f8fafc; color:#374151;">{html.escape(share_text)}</textarea>
                     <button onclick="navigator.clipboard.writeText(document.getElementById('shareBox').value).then(()=>{{this.textContent='✅ 복사됨!'; setTimeout(()=>this.textContent='📋 복사',1500)}})"
                         style="margin-top:8px; padding:8px 20px; background:#3d9df3; color:white;
                                border:none; border-radius:8px; font-size:14px; cursor:pointer; font-weight:600;">
@@ -397,7 +400,7 @@ if not st.session_state.analyzing:
                             AI 문맥 분석
                             <span style='font-size:11px; color:#0ea5e9; margin-left:6px;'>Gemini</span>
                         </div>
-                        <div style='font-size:13px; color:#374151;'>{gemini_text_result['reason']}</div>
+                        <div style='font-size:13px; color:#374151;'>{html.escape(str(gemini_text_result['reason']))}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -405,10 +408,10 @@ if not st.session_state.analyzing:
                     signals_html = "".join(
                         f"<span style='background:#7c3aed22; color:#7c3aed; border:1px solid #7c3aed44; "
                         f"padding:4px 10px; border-radius:8px; font-size:12px; font-weight:bold; "
-                        f"margin:3px; display:inline-block;'>{s}</span>"
+                        f"margin:3px; display:inline-block;'>{html.escape(str(s))}</span>"
                         for s in vlm_result["visual_signals"]
                     )
-                    reason_html = f"<div style='font-size:12px; color:#64748b; margin-top:8px;'>{vlm_result['reason']}</div>" if vlm_result.get("reason") else ""
+                    reason_html = f"<div style='font-size:12px; color:#64748b; margin-top:8px;'>{html.escape(str(vlm_result['reason']))}</div>" if vlm_result.get("reason") else ""
                     st.markdown(f"""
                     <div style='background:white; border:1px solid {_g_color}44; border-radius:12px; padding:1rem; margin-top:0.5rem;'>
                         <div style='font-size:13px; color:#64748b; margin-bottom:8px;'>
@@ -428,8 +431,8 @@ if not st.session_state.analyzing:
                         word = kw.get("keyword", "")
                         chips_html += f"""<span style='background:{kcolor}22; color:{kcolor}; border:1px solid {kcolor}55;
                             padding:4px 10px; border-radius:8px; font-size:12px; font-weight:bold;
-                            margin:3px; display:inline-block;'>{word}
-                            <span style='opacity:0.7; font-size:10px;'>[{klabel}]</span></span>"""
+                            margin:3px; display:inline-block;'>{html.escape(str(word))}
+                            <span style='opacity:0.7; font-size:10px;'>[{html.escape(str(klabel))}]</span></span>"""
                     st.markdown(f"""
                     <div style='background:white; border:1px solid #e2e8f0; border-radius:12px; padding:1rem; margin-top:0.5rem;'>
                         <div style='font-size:13px; color:#64748b; margin-bottom:8px;'>탐지된 위험 키워드</div>
@@ -448,7 +451,7 @@ if not st.session_state.analyzing:
                     reasons_html = "".join(
                         f"<div style='display:flex; align-items:flex-start; gap:8px; margin-bottom:6px;'>"
                         f"<span style='color:{cfg['color']}; font-weight:bold; flex-shrink:0;'>•</span>"
-                        f"<span style='font-size:13px; color:#374151;'>{r}</span></div>"
+                        f"<span style='font-size:13px; color:#374151;'>{html.escape(str(r))}</span></div>"
                         for r in text_reasons
                     )
                     st.markdown(f"""
@@ -462,7 +465,7 @@ if not st.session_state.analyzing:
                     url_reasons_html = "".join(
                         f"<div style='display:flex; align-items:flex-start; gap:8px; margin-bottom:6px;'>"
                         f"<span style='color:{cfg['color']}; font-weight:bold; flex-shrink:0;'>•</span>"
-                        f"<span style='font-size:13px; color:#374151;'>{r}</span></div>"
+                        f"<span style='font-size:13px; color:#374151;'>{html.escape(str(r))}</span></div>"
                         for r in url_reasons
                     )
                     st.markdown(f"""
@@ -497,6 +500,7 @@ if st.session_state.analyzing:
         st.rerun()
 
     api_result = {"data": None, "error": None, "done": False, "cancelled": False}
+    analysis_id = f"streamlit-{time.time_ns()}"
 
     def call_api():
         try:
@@ -504,11 +508,15 @@ if st.session_state.analyzing:
                 response = requests.post(
                     f"{API_URL}/analyze-text",
                     json={"text": file_data["text"]},
+                    headers={"X-Analysis-ID": analysis_id},
                     timeout=180
                 )
             else:
                 files = {"file": (file_data["name"], file_data["data"], file_data["type"])}
-                response = requests.post(f"{API_URL}/analyze", files=files, timeout=180)
+                response = requests.post(
+                    f"{API_URL}/analyze", files=files,
+                    headers={"X-Analysis-ID": analysis_id}, timeout=180
+                )
 
             if response.status_code == 200:
                 api_result["data"] = response.json()
@@ -549,6 +557,10 @@ if st.session_state.analyzing:
     while not api_result["done"]:
         if stop_btn:
             api_result["cancelled"] = True
+            try:
+                requests.post(f"{API_URL}/analysis/cancel/{analysis_id}", timeout=2)
+            except Exception:
+                pass
             break
         time.sleep(0.1)
 

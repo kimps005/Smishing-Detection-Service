@@ -6,11 +6,13 @@ import sys
 import re
 import requests
 import time
+import argparse
+import os
+from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 
 API_URL = "http://127.0.0.1:8000/analyze-text"
-HTML_FILE = r"C:\Users\seohy\OneDrive\문서\카카오톡 받은 파일\6909e35b-5c12-495a-940c-6bf031511b52.html"
 DELAY = 5.0  # Gemini free tier 15 RPM 제한 대응
 
 SAMPLE_SIZE = None  # None이면 전체, 숫자 입력 시 앞에서 N개만
@@ -36,12 +38,14 @@ def parse_messages(filepath: str) -> list[str]:
     return messages
 
 
-def run_test():
+def run_test(html_file: Path, sample_size: int | None = SAMPLE_SIZE):
     print("파일 파싱 중...")
-    messages = parse_messages(HTML_FILE)
+    if not html_file.is_file():
+        raise FileNotFoundError(f"HTML 파일을 찾을 수 없습니다: {html_file}")
+    messages = parse_messages(str(html_file))
     print(f"총 {len(messages)}개 메시지 발견")
 
-    sample = messages if SAMPLE_SIZE is None else messages[:SAMPLE_SIZE]
+    sample = messages if sample_size is None else messages[:sample_size]
     total = len(sample)
     print(f"→ {total}개 테스트 시작 (예상 소요: {total * DELAY / 60:.1f}분)\n")
 
@@ -96,4 +100,14 @@ def run_test():
 
 
 if __name__ == "__main__":
-    run_test()
+    parser = argparse.ArgumentParser(description="개인 문자 HTML 파일 API 테스트")
+    parser.add_argument(
+        "--html",
+        default=os.getenv("MESSAGES_HTML_FILE"),
+        help="분석할 HTML 파일 경로 (MESSAGES_HTML_FILE로도 설정 가능)",
+    )
+    parser.add_argument("--sample-size", type=int, default=SAMPLE_SIZE)
+    args = parser.parse_args()
+    if not args.html:
+        parser.error("--html 경로 또는 MESSAGES_HTML_FILE 환경변수가 필요합니다.")
+    run_test(Path(args.html), args.sample_size)

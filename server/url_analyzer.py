@@ -18,9 +18,11 @@ P_URL 점수 산출 모듈
 
 import os
 import re
+import ipaddress
 import requests
+import socket
 from dotenv import load_dotenv
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import whois  # pip install python-whois
@@ -92,6 +94,57 @@ def extract_domain(url):
         return ""
 
 
+def validate_public_url(url: str, resolve_dns: bool = False) -> tuple[bool, str]:
+    """HTTP(S) URL이 공용 인터넷 주소인지 확인한다.
+
+    URL 분석은 입력값을 실제로 요청하므로 localhost, 사설망, link-local,
+    메타데이터 엔드포인트 및 사설 IP로 해석되는 도메인을 차단한다.
+    ``resolve_dns=False``는 OCR 단계의 빠른 문법 검증용이고, 실제 요청
+    직전에는 DNS까지 확인한다.
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return False, "HTTP(S) URL만 조회할 수 있습니다"
+        if parsed.username or parsed.password:
+            return False, "사용자 정보가 포함된 URL은 조회할 수 없습니다"
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+        if not hostname or hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
+            return False, "로컬 주소는 조회할 수 없습니다"
+        try:
+            parsed.port
+        except ValueError:
+            return False, "잘못된 포트가 포함된 URL입니다"
+
+        addresses = []
+        try:
+            literal = ipaddress.ip_address(hostname)
+            addresses = [literal]
+        except ValueError:
+            if resolve_dns:
+                try:
+                    addresses = [
+                        ipaddress.ip_address(info[4][0])
+                        for info in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+                    ]
+                except (socket.gaierror, socket.timeout, ValueError):
+                    return False, "도메인 주소를 확인할 수 없습니다"
+
+        for address in set(addresses):
+            if (
+                address.is_private
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_multicast
+                or address.is_reserved
+                or address.is_unspecified
+            ):
+                return False, "사설 또는 로컬 네트워크 주소는 조회할 수 없습니다"
+        return True, ""
+    except Exception:
+        return False, "잘못된 URL입니다"
+
+
 # =============================================================
 # 1. 최종 도착지 추적 (★ 핵심 추가 기능)
 # =============================================================
@@ -136,28 +189,50 @@ def resolve_url(url, timeout=5):
 
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'CatchSmishing URL checker/1.0'
         }
-        response = requests.head(
-            request_url,
-            headers=headers,
-            allow_redirects=True,
-            timeout=timeout
-        )
-        # HEAD에 리다이렉트 없이 그대로 반환한 경우 GET으로 재시도
-        if response.url == request_url:
-            get_response = requests.get(
-                request_url,
+        current_url = request_url
+        method = 'HEAD'
+        max_redirects = 5
+
+        for hop in range(max_redirects + 1):
+            safe, reason = validate_public_url(current_url, resolve_dns=True)
+            if not safe:
+                result['error'] = reason
+                return result
+
+            response = requests.request(
+                method,
+                current_url,
                 headers=headers,
-                allow_redirects=True,
+                allow_redirects=False,
                 timeout=timeout,
                 stream=True,
             )
-            get_response.close()
-            response = get_response
-        result['final_url'] = response.url
-        result['final_domain'] = extract_domain(response.url)
-        result['content_type'] = response.headers.get('Content-Type', '')
+
+            location = response.headers.get('Location')
+            if 300 <= response.status_code < 400 and location:
+                if hop >= max_redirects:
+                    response.close()
+                    result['error'] = "리다이렉트 횟수가 너무 많습니다"
+                    return result
+                next_url = urljoin(current_url, location)
+                response.close()
+                current_url = next_url
+                method = 'HEAD'
+                continue
+
+            # HEAD를 지원하지 않는 서버만 GET으로 한 번 재시도한다.
+            if method == 'HEAD' and response.status_code in {405, 501}:
+                response.close()
+                method = 'GET'
+                continue
+
+            result['final_url'] = current_url
+            result['final_domain'] = extract_domain(current_url)
+            result['content_type'] = response.headers.get('Content-Type', '')
+            response.close()
+            break
     except requests.exceptions.ConnectionError:
         result['error'] = "도메인에 연결할 수 없습니다"
     except requests.exceptions.Timeout:

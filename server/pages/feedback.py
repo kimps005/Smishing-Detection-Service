@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import re
+import html
 from collections import defaultdict
 
 API_URL = "http://127.0.0.1:8000"
@@ -88,7 +89,7 @@ with tab_submit:
             try:
                 if has_image:
                     uploaded_img.seek(0)
-                    requests.post(
+                    response = requests.post(
                         f"{API_URL}/feedback",
                         data={"given_grade": given, "correct_grade": correct,
                               "reason": reason, "text_content": final_text},
@@ -96,12 +97,13 @@ with tab_submit:
                         timeout=5,
                     )
                 else:
-                    requests.post(
+                    response = requests.post(
                         f"{API_URL}/feedback",
                         data={"given_grade": given, "correct_grade": correct,
                               "reason": reason, "text_content": final_text},
                         timeout=5,
                     )
+                response.raise_for_status()
                 st.success("피드백이 제출됐습니다. 감사합니다!")
             except Exception:
                 st.error("제출에 실패했습니다. 서버 연결을 확인해주세요.")
@@ -205,6 +207,9 @@ with tab_usage:
             count    = item.get("count", 0)
             color    = CATEGORY_COLORS.get(category, "#dc2626")
             cat_name = CATEGORY_NAMES.get(category, category)
+            safe_url = html.escape(str(url), quote=True)
+            safe_cat_name = html.escape(str(cat_name), quote=True)
+            safe_count = html.escape(str(count), quote=True)
             rank_display = MEDALS[i] if i < 3 else f"{rank}위"
 
             if i < 3:
@@ -222,12 +227,12 @@ with tab_usage:
                 f"<div style='{rank_style}'>{rank_display}</div>"
                 f"<div style='flex:1; min-width:0;'>"
                 f"<div style='font-size:13px; color:#18181b; font-weight:600;"
-                f"overflow:hidden; text-overflow:ellipsis; white-space:nowrap;' title='{url}'>{url}</div></div>"
+                f"overflow:hidden; text-overflow:ellipsis; white-space:nowrap;' title='{safe_url}'>{safe_url}</div></div>"
                 f"<span style='background:{color}22; color:{color}; border:1px solid {color}44;"
                 f"padding:3px 10px; border-radius:6px; font-size:12px; font-weight:bold;"
-                f"white-space:nowrap;'>{cat_name}</span>"
+                f"white-space:nowrap;'>{safe_cat_name}</span>"
                 f"<div style='font-size:13px; color:#64748b; white-space:nowrap; min-width:60px; text-align:right;'>"
-                f"탐지 <b>{count}</b>회</div></div>",
+                f"탐지 <b>{safe_count}</b>회</div></div>",
                 unsafe_allow_html=True
             )
 

@@ -5,11 +5,15 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 DB_HOST = os.getenv("DB_HOST", "").strip()
-DB_PORT = int(os.getenv("DB_PORT", "0") or 0)
+try:
+    DB_PORT = int(os.getenv("DB_PORT", "0") or 0)
+except ValueError:
+    DB_PORT = 0
 DB_USER = os.getenv("DB_USER", "").strip()
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "defaultdb").strip()
 DB_SSL_CA = os.getenv("DB_SSL_CA", "").strip()
+DB_SSL_VERIFY = os.getenv("DB_SSL_VERIFY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 def get_db_conn():
     missing = []
@@ -38,6 +42,8 @@ def get_db_conn():
     )
     if DB_SSL_CA:
         options["ssl"] = {"ca": DB_SSL_CA}
+    elif DB_SSL_VERIFY:
+        raise RuntimeError("DB_SSL_CA가 필요합니다. 개발용으로 인증서 검증을 끄려면 DB_SSL_VERIFY=0을 명시하세요.")
     else:
         options.update(
             ssl_verify_cert=False,
