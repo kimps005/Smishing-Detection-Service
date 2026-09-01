@@ -1,2 +1,0 @@
-# Large ML artifacts are stored through Git LFS instead of ordinary Git blobs.
-models/*.pt filter=lfs diff=lfs merge=lfs -text

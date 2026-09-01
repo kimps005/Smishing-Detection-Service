@@ -40,11 +40,9 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# ML checkpoints. The deployment artifact under models/ is tracked with Git LFS.
+# Local ML checkpoints are downloaded from Hugging Face when needed.
 *.pt
 *.pth
-!models/
-!models/*.pt
 /models/klue-bert-base/
 
 # Local/generated data
