@@ -9,6 +9,7 @@
 - 서비스: [catchsmishing.com](https://catchsmishing.com)
 - API: [api.catchsmishing.com](https://api.catchsmishing.com)
 - 모델: [kimps005/sms-category-model](https://huggingface.co/kimps005/sms-category-model)
+- 프로젝트 위키: [wiki/Home.md](wiki/Home.md)
 
 > 이 서비스의 결과는 사용자의 확인을 돕는 **보조 신호**입니다. `Safe` 결과도 발신자·링크·기관의 진위를 보증하지 않으며, 금전·개인정보와 관련된 요청은 반드시 해당 기관의 공식 앱 또는 공식 번호로 별도 확인해야 합니다.
 
