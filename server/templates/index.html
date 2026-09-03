@@ -13,8 +13,8 @@ body {
 
 /* ─── 2열 대시보드 ─── */
 .dash {
-  margin-top: var(--nav-h);
-  height: calc(100vh - var(--nav-h));
+  margin-top: var(--nav-rendered-h);
+  height: calc(100vh - var(--nav-rendered-h));
   display: grid;
   grid-template-columns: 5.5fr 6.5fr;
 }
@@ -188,7 +188,7 @@ body {
   .type-grid { grid-template-rows: auto; grid-auto-rows: auto; height: auto; }
 }
 @media (max-width: 680px) {
-  .dash { margin-top: var(--nav-h); }
+  .dash { margin-top: var(--nav-rendered-h); }
   .dash-left { padding: 1.2rem 0.9rem; }
   .dash-right { padding: 1.2rem 0.9rem; }
   .hero h1 { font-size: 1.7rem; }
